@@ -1,0 +1,30 @@
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build & distribution
+build/
+dist/
+*.egg-info/
+
+# Local runtime settings and recorded signals
+settings.json
+settings.json.tmp
+recordings/
+*.sigmf-data
+*.sigmf-meta
+*.tmp
+
+# IDE / Editor files
+.idea/
+.vscode/
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store

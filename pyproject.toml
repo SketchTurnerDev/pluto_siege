@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pluto_siege"
+version = "1.0.0"
+description = "PlutoSDR ISM-band RF capture and replay tool (433 MHz, 868 MHz, etc.)."
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+authors = [
+    { name = "SketchTurnerDev" }
+]
+requires-python = ">=3.9"
+dependencies = [
+    "pyadi-iio>=0.0.16",
+    "numpy>=1.20.0",
+    "windows-curses>=2.3.0; sys_platform == 'win32'",
+]
+
+[project.scripts]
+pluto_siege = "pluto_siege.ui.screens.main_menu:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
