@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pluto_siege"
-version = "1.0.0"
+version = "1.0.1"
 description = "PlutoSDR ISM-band RF capture and replay tool (433 MHz, 868 MHz, etc.)."
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }

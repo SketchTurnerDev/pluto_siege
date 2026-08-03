@@ -84,13 +84,13 @@ Settings can be edited in the TUI **Settings** screen and are saved to `settings
 | `permit_out_of_spec_frequency` | `bool` | `false` | Allows tuning outside 325 MHz – 3.8 GHz range (up to 70 MHz – 6.0 GHz). |
 | `rx_freq` | `int` | `433920000` | Receiver center frequency in Hz. |
 | `tx_freq` | `int` | `433920000` | Transmitter center frequency in Hz. |
-| `sample_rate` | `int` | `2000000` | Sample rate in Hz (521 kSPS – 61.44 MSPS). |
-| `rx_gain` | `float` | `50.0` | Manual RX hardware gain in dB (0.0 to 74.5 dB). |
-| `tx_gain` | `float` | `-50.0` | Manual TX attenuation gain in dB (-89.75 to 0.0 dB). |
+| `sample_rate` | `int` | `2100000` | Sample rate in Hz (521 kSPS – 61.44 MSPS). |
+| `rx_gain` | `float` | `15.0` | Manual RX hardware gain in dB (0.0 to 74.5 dB). |
+| `tx_gain` | `float` | `0.0` | Manual TX attenuation gain in dB (-89.75 to 0.0 dB). |
 | `rx_buffer_size` | `int` | `32768` | DMA buffer size in samples (1024 to 32768). |
 | `pre_trigger_buffers` | `int` | `2` | Number of pre-trigger buffers kept in memory. |
-| `silence_seconds` | `float` | `0.30` | Silence required to stop recording. |
-| `max_post_trigger_seconds` | `float` | `2.00` | Maximum recording length after trigger. |
+| `silence_seconds` | `float` | `0.80` | Silence required to stop recording. |
+| `max_post_trigger_seconds` | `float` | `4.00` | Maximum recording length after trigger. |
 | `auto_threshold` | `bool` | `true` | Automated noise floor calculation. |
 | `auto_trigger_margin` | `float` | `8.0` | Margin in dB above noise floor required to trigger capture (1.0 to 30.0 dB). |
 | `manual_threshold` | `float` | `-30.0` | Fixed trigger threshold in dBFS when auto is off. |

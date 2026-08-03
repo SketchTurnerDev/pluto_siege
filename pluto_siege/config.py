@@ -45,16 +45,16 @@ class AppConfig:
     pluto_uri: str = "ip:192.168.2.1"
     rx_freq: int = 433_920_000
     tx_freq: int = 433_920_000
-    sample_rate: int = 2_000_000
-    rx_gain: float = 50.0
-    tx_gain: float = -50.0
+    sample_rate: int = 2_100_000
+    rx_gain: float = 15.0
+    tx_gain: float = 0.0
     rx_buffer_size: int = 32768
     auto_threshold: bool = True
     auto_trigger_margin: float = 8.0
     manual_threshold: float = -30.0
     pre_trigger_buffers: int = 2
-    silence_seconds: float = 0.3
-    max_post_trigger_seconds: float = 2.0
+    silence_seconds: float = 0.8
+    max_post_trigger_seconds: float = 4.0
     permit_out_of_spec_frequency: bool = False
 
     def __getitem__(self, item: str) -> Any:

@@ -19,7 +19,7 @@
 import os
 
 AUTHOR = "SketchTurnerDev"  # recorded in SigMF metadata as core:author
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 LICENSE = "GPL-3.0-or-later"
 LICENSE_SHORT = "GNU GPLv3"
 
@@ -67,7 +67,7 @@ MAX_RAM_BYTES = 512 * 1024 * 1024
 MAX_TX_BURST_SAMPLES = 16 * 1024 * 1024
 # sdr.tx() returns once the kernel accepts the buffer, not once the samples have
 # left the DAC, so the buffer must not be destroyed the instant the loop ends.
-TX_DRAIN_MARGIN_SECONDS = 0.05
+TX_DRAIN_MARGIN_SECONDS = 0.30
 
 # Bound blocking libiio transfers. The margin is deliberately generous: the goal
 # is to fail instead of hanging forever, not to police a merely slow link.
