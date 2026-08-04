@@ -132,8 +132,17 @@ MIN_WIN_HEIGHT = 31
 MIN_WIN_WIDTH = 90
 
 
+def update_term_size() -> None:
+    """Synchronize curses screen buffer size with actual terminal dimensions on Windows."""
+    try:
+        curses.resize_term(0, 0)
+    except Exception:
+        pass
+
+
 def draw_chrome(win: "curses.window", subtitle: str = "", hint: str = "") -> int:
     """Draw logo, divider and footer hint. Returns the first free content row, or -1 if too small."""
+    update_term_size()
     win.erase()
     h, w = win.getmaxyx()
     if h < MIN_WIN_HEIGHT or w < MIN_WIN_WIDTH:

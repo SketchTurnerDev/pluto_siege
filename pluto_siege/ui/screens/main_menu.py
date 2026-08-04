@@ -21,21 +21,9 @@ import sys
 import time
 from typing import Any, Optional
 
-try:
-    import curses
-except ImportError:
-    print("Missing curses library.", file=sys.stderr)
-    print("On Windows, please install: pip install windows-curses", file=sys.stderr)
-    sys.exit(1)
-
-try:
-    import numpy as np
-    import adi
-except Exception as e:
-    print(f"Missing dependency or libiio driver: {e}", file=sys.stderr)
-    print("On Windows: please install libiio-setup.exe from Analog Devices releases.", file=sys.stderr)
-    print("On Linux: run 'sudo apt install -y libiio0 libiio-dev libiio-utils'", file=sys.stderr)
-    sys.exit(1)
+import curses
+import numpy as np
+import adi
 
 from pluto_siege.device import SDRDevice, open_sdr, release_sdr
 from pluto_siege.settings import CONFIG, save_settings

@@ -19,7 +19,7 @@
 import os
 
 AUTHOR = "SketchTurnerDev"  # recorded in SigMF metadata as core:author
-VERSION = "1.0.1"
+VERSION = "1.0.2"
 LICENSE = "GPL-3.0-or-later"
 LICENSE_SHORT = "GNU GPLv3"
 
