@@ -22,8 +22,6 @@ import time
 from typing import Any, Optional
 
 import curses
-import numpy as np
-import adi
 
 from pluto_siege.device import SDRDevice, open_sdr, release_sdr
 from pluto_siege.settings import CONFIG, save_settings
@@ -100,9 +98,21 @@ def connect_screen(win: "curses.window") -> tuple[Optional[SDRDevice], str]:
             win.refresh()
             time.sleep(0.1)
             continue
-        _put(win, start_y, 2, f"Cannot connect: {err_msg}", cp(C_ERR))
-        _put(win, start_y + 1, 2, "Check the Pluto URI in Settings, then retry.", cp(C_WARN))
-        _put(win, start_y + 2, 2, "You can still open Settings to change the URI.", cp(C_WARN))
+        err_lines = [line.strip() for line in err_msg.splitlines() if line.strip()]
+        curr_y = start_y
+        if len(err_lines) <= 1:
+            msg = err_lines[0] if err_lines else "Unknown error"
+            _put(win, curr_y, 2, f"Cannot connect: {msg}", cp(C_ERR))
+            curr_y += 1
+        else:
+            _put(win, curr_y, 2, "Cannot connect:", cp(C_ERR))
+            curr_y += 1
+            for el in err_lines:
+                _put(win, curr_y, 4, el, cp(C_ERR))
+                curr_y += 1
+        curr_y += 1
+        _put(win, curr_y, 2, "Check the Pluto URI in Settings, then retry.", cp(C_WARN))
+        _put(win, curr_y + 1, 2, "You can still open Settings to change the URI.", cp(C_WARN))
         win.refresh()
 
         flush_input(win)

@@ -60,23 +60,43 @@ class SDRDevice(Protocol):
 
 class suppress_c_stderr:
     """Redirect low-level C stderr (fd 2) to devnull to prevent C libiio logs from corrupting curses TUI."""
+
     def __enter__(self) -> None:
+        self._null = -1
+        self._stderr = -1
         try:
             self._null = os.open(os.devnull, os.O_WRONLY)
             self._stderr = os.dup(2)
             os.dup2(self._null, 2)
         except Exception:
-            self._null = -1
-            self._stderr = -1
+            if self._null != -1:
+                try:
+                    os.close(self._null)
+                except Exception:
+                    pass
+                self._null = -1
+            if self._stderr != -1:
+                try:
+                    os.close(self._stderr)
+                except Exception:
+                    pass
+                self._stderr = -1
 
     def __exit__(self, *args: Any) -> None:
-        if self._stderr != -1:
-            try:
+        try:
+            if self._stderr != -1:
                 os.dup2(self._stderr, 2)
-                os.close(self._stderr)
-                os.close(self._null)
-            except Exception:
-                pass
+        finally:
+            if self._stderr != -1:
+                try:
+                    os.close(self._stderr)
+                except Exception:
+                    pass
+            if self._null != -1:
+                try:
+                    os.close(self._null)
+                except Exception:
+                    pass
 
 
 def cleanup_sdr(sdr: SDRDevice) -> None:

@@ -27,7 +27,6 @@ from pluto_siege.constants import (
 from pluto_siege.device import cleanup_sdr
 from pluto_siege.engine import CaptureEngine
 from pluto_siege.settings import CONFIG
-from pluto_siege.sigmf import save_sigmf_pair, to_sigmf_utc
 from pluto_siege.ui.widgets.framework import (
     C_DIM,
     C_ERR,
@@ -132,18 +131,7 @@ def screen_capture(win: "curses.window", sdr, hw_model: str) -> None:
         if engine.current_saturated:
             log.append(("SATURATION detected. Lower RX gain.", C_WARN))
 
-        ts = engine.start_time.strftime("%Y%m%d_%H%M%S_%f")
-        base = os.path.join(
-            RECORDS_DIR, f"rec_{ts}_{engine.actual_freq}_{engine.actual_sr}"
-        )
-        save_sigmf_pair(
-            base,
-            engine.captured_data,
-            engine.actual_freq,
-            engine.actual_sr,
-            to_sigmf_utc(engine.start_time),
-            hw_model,
-        )
+        base = engine.save_recording(RECORDS_DIR, hw_model)
         log.append(
             (
                 f"Saved: {os.path.basename(base)}.sigmf-data",

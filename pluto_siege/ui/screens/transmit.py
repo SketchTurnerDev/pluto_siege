@@ -19,24 +19,16 @@
 import curses
 import datetime
 import glob
-import math
 import os
-import stat
-import time
 from typing import Optional
-
-import numpy as np
 
 from pluto_siege.constants import (
     BYTES_PER_SAMPLE,
     IO_TIMEOUT_UNAVAILABLE,
-    MAX_TX_BURST_SAMPLES,
     RECORDS_DIR,
-    TX_BACKOFF,
-    TX_DAC_MAX,
-    TX_DRAIN_MARGIN_SECONDS,
 )
-from pluto_siege.device import SDRDevice, cfg_tx, cleanup_sdr, set_io_timeout, suppress_c_stderr
+from pluto_siege.device import SDRDevice
+from pluto_siege.engine import TransmitEngine
 from pluto_siege.sigmf import load_sigmf_meta
 from pluto_siege.ui.widgets.framework import (
     C_DIM,
@@ -124,36 +116,6 @@ def pick_recording(win: "curses.window") -> Optional[str]:
         return target_file
 
 
-def load_tx_payload(path: str) -> np.ndarray:
-    """Read a recording and scale it for the DAC. Raises ValueError if unusable."""
-    st = os.stat(path, follow_symlinks=False)
-    if not stat.S_ISREG(st.st_mode):
-        raise ValueError("Target is not a regular file.")
-    if st.st_size == 0:
-        raise ValueError("Recording is empty")
-    if st.st_size % BYTES_PER_SAMPLE != 0:
-        raise ValueError("File size not aligned to complex64")
-    n_samples = st.st_size // BYTES_PER_SAMPLE
-    if n_samples > MAX_TX_BURST_SAMPLES:
-        raise ValueError(f"Recording too large: {n_samples} samples "
-                         f"(limit {MAX_TX_BURST_SAMPLES})")
-
-    data = np.fromfile(path, dtype="<c8", count=n_samples)
-    if data.size != n_samples:
-        raise ValueError("Recording shrank while being read")
-    data = np.asarray(data, dtype=np.complex64)
-
-    flat = data.view(np.float32)
-    hi, lo = float(flat.max()), float(flat.min())
-    if not (math.isfinite(hi) and math.isfinite(lo)):
-        raise ValueError("NaN/Inf in recording")
-    peak = max(hi, -lo)
-    if peak < 1e-6:
-        raise ValueError("Recording is too quiet or empty")
-    data *= np.float32(TX_BACKOFF * TX_DAC_MAX / peak)
-    return data
-
-
 def do_transmit(win: "curses.window", sdr: SDRDevice, path: str) -> int:
     """Replay one recording, then show the result. Returns the key that closed it."""
     log: list[tuple[str, int]] = []
@@ -167,35 +129,19 @@ def do_transmit(win: "curses.window", sdr: SDRDevice, path: str) -> int:
         log.append(("Configuring transmitter...", C_DIM))
         render()
 
-        use_sr, use_freq, problem = load_sigmf_meta(path)
-        if problem is not None:
-            raise ValueError(f"untrusted recording - {problem}")
-
-        data = load_tx_payload(path)
-
-        cfg_tx(sdr, use_sr, use_freq)
-        actual_sr = int(sdr.sample_rate)
-
-        if not set_io_timeout(sdr, data.size / actual_sr):
-            log.append((IO_TIMEOUT_UNAVAILABLE, C_WARN))
+        data, use_sr, use_freq = TransmitEngine.prepare_transmission(path)
 
         log.append((f"{use_freq / 1e6:.3f} MHz  {use_sr / 1e6:.2f} MSPS  {data.size:,} Samples", C_DIM))
         log.append((f"Transmitting recording: {os.path.basename(path)}...", C_DIM))
         render()
-        try:
-            on_air_end = time.monotonic() + data.size / actual_sr
-            with suppress_c_stderr():
-                sdr.tx(data)
-            drain = on_air_end + TX_DRAIN_MARGIN_SECONDS - time.monotonic()
-            if drain > 0:
-                time.sleep(drain)
-        finally:
-            cleanup_sdr(sdr)
+
+        timeout_ok = TransmitEngine.transmit(sdr, data, use_sr, use_freq)
+        if not timeout_ok:
+            log.append((IO_TIMEOUT_UNAVAILABLE, C_WARN))
 
         log.append(("Signal replayed successfully!", C_OK))
     except Exception as e:
         log.append((f"TX failed: {e}", C_ERR))
-        cleanup_sdr(sdr)
 
     flush_input(win)
     return scroll_view(win, "Transmit Complete", log,

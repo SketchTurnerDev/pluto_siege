@@ -25,6 +25,7 @@ from typing import Optional
 from pluto_siege.constants import (
     AUTHOR,
     BYTES_PER_SAMPLE,
+    RX_FULL_SCALE,
     SAMPLE_RATE_RANGE,
     VERSION,
 )
@@ -52,15 +53,21 @@ def save_sigmf_pair(base_path: str, array: np.ndarray, freq: int, sr: int,
     meta_path = base_path + ".sigmf-meta"
     promoted = False
     try:
-        array.astype("<c8", copy=False).tofile(tmp_data_path)
+        norm_data = (array / RX_FULL_SCALE).astype("<c8")
+        norm_data.tofile(tmp_data_path)
         meta = {
             "global": {
-                "core:datatype": "cf32_le", "core:sample_rate": int(sr),
-                "core:hw": hw_model, "core:author": AUTHOR, "core:version": VERSION,
+                "core:datatype": "cf32_le",
+                "core:sample_rate": int(sr),
+                "core:hw": hw_model,
+                "core:author": AUTHOR,
+                "core:version": "1.0.0",
+                "core:recorder": f"PlutoSiege v{VERSION}",
                 "core:description": "Host-estimated timestamp. May have USB/IIO latency.",
             },
             "captures": [{
-                "core:sample_start": 0, "core:frequency": int(freq),
+                "core:sample_start": 0,
+                "core:frequency": int(freq),
                 "core:datetime": timestamp_iso,
             }],
             "annotations": [],

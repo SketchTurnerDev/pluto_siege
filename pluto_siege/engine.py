@@ -14,28 +14,47 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Capture engine for RF signal detection, trigger evaluation, and memory-safe sample recording."""
+"""Engines for RF signal capture, transmission, and loopback testing."""
 
 from collections import deque
 import datetime
 import math
+import os
+import stat
+import time
 from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
 from pluto_siege.constants import (
     BYTES_PER_SAMPLE,
+    LOOPBACK_TONE_HZ,
+    LOOPBACK_TX_AMPLITUDE,
     MANUAL_RELEASE_DROP_DB,
     MAX_RAM_BYTES,
+    MAX_TX_BURST_SAMPLES,
     MIN_TRIGGER_SUB_WINDOWS,
     NF_PROBE_BUFFERS,
     RAM_SAFETY_FACTOR,
     RELEASE_MARGIN_DB,
     RX_FLUSH_BUFFERS,
     TRIGGER_MARGIN_DB,
+    TX_BACKOFF,
+    TX_DAC_MAX,
+    TX_DRAIN_MARGIN_SECONDS,
 )
-from pluto_siege.device import SDRDevice, cfg_rx, safe_rx
+from pluto_siege.device import (
+    SDRDevice,
+    cfg_loopback,
+    cfg_rx,
+    cfg_tx,
+    cleanup_sdr,
+    safe_rx,
+    set_io_timeout,
+    suppress_c_stderr,
+)
 from pluto_siege.dsp import (
+    calculate_snr_db,
     dbfs_to_power,
     is_saturated,
     max_subwindow_dbfs,
@@ -44,6 +63,7 @@ from pluto_siege.dsp import (
     subwindow_powers,
 )
 from pluto_siege.settings import CONFIG
+from pluto_siege.sigmf import load_sigmf_meta, save_sigmf_pair, to_sigmf_utc
 
 
 class CaptureEngine:
@@ -214,3 +234,105 @@ class CaptureEngine:
                 break
 
             ring.append(data)
+
+    def save_recording(self, records_dir: str, hw_model: str) -> str:
+        if self.captured_data is None or self.start_time is None:
+            raise ValueError("No captured data to save")
+        os.makedirs(records_dir, exist_ok=True)
+        ts = self.start_time.strftime("%Y%m%d_%H%M%S_%f")
+        base = os.path.join(
+            records_dir, f"rec_{ts}_{self.actual_freq}_{self.actual_sr}"
+        )
+        save_sigmf_pair(
+            base,
+            self.captured_data,
+            self.actual_freq,
+            self.actual_sr,
+            to_sigmf_utc(self.start_time),
+            hw_model,
+        )
+        return base
+
+
+class TransmitEngine:
+    @staticmethod
+    def load_payload(path: str) -> np.ndarray:
+        st = os.stat(path, follow_symlinks=False)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError("Target is not a regular file.")
+        if st.st_size == 0:
+            raise ValueError("Recording is empty")
+        if st.st_size % BYTES_PER_SAMPLE != 0:
+            raise ValueError("File size not aligned to complex64")
+        n_samples = st.st_size // BYTES_PER_SAMPLE
+        if n_samples > MAX_TX_BURST_SAMPLES:
+            raise ValueError(f"Recording too large: {n_samples} samples (limit {MAX_TX_BURST_SAMPLES})")
+
+        data = np.fromfile(path, dtype="<c8", count=n_samples)
+        if data.size != n_samples:
+            raise ValueError("Recording shrank while being read")
+        data = np.asarray(data, dtype=np.complex64)
+
+        flat = data.view(np.float32)
+        hi, lo = float(flat.max()), float(flat.min())
+        if not (math.isfinite(hi) and math.isfinite(lo)):
+            raise ValueError("NaN/Inf in recording")
+        peak = max(hi, -lo)
+        if peak < 1e-6:
+            raise ValueError("Recording is too quiet or empty")
+        data *= np.float32(TX_BACKOFF * TX_DAC_MAX / peak)
+        return data
+
+    @classmethod
+    def prepare_transmission(cls, path: str) -> Tuple[np.ndarray, int, int]:
+        use_sr, use_freq, problem = load_sigmf_meta(path)
+        if problem is not None or use_sr is None or use_freq is None:
+            raise ValueError(f"untrusted recording - {problem}")
+        data = cls.load_payload(path)
+        return data, use_sr, use_freq
+
+    @staticmethod
+    def transmit(sdr: SDRDevice, data: np.ndarray, sample_rate: int, freq: int) -> bool:
+        cfg_tx(sdr, sample_rate, freq)
+        actual_sr = int(sdr.sample_rate)
+        timeout_ok = set_io_timeout(sdr, data.size / actual_sr)
+        try:
+            on_air_end = time.monotonic() + data.size / actual_sr
+            with suppress_c_stderr():
+                sdr.tx(data)
+            drain = on_air_end + TX_DRAIN_MARGIN_SECONDS - time.monotonic()
+            if drain > 0:
+                time.sleep(drain)
+        finally:
+            cleanup_sdr(sdr)
+        return timeout_ok
+
+
+class LoopbackTester:
+    @staticmethod
+    def run_test(sdr: SDRDevice, sample_rate: int, rx_buffer_size: int) -> Tuple[float, float, bool]:
+        try:
+            timeout_ok = cfg_loopback(sdr)
+            fs = int(sdr.sample_rate)
+            n_samples = int(rx_buffer_size)
+            tone_bin = max(1, round(LOOPBACK_TONE_HZ * n_samples / fs))
+            tone_freq = tone_bin * fs / n_samples
+
+            n = np.arange(n_samples, dtype=np.float64)
+            tx = (
+                LOOPBACK_TX_AMPLITUDE
+                * np.exp(2j * np.pi * tone_bin * n / n_samples)
+                * TX_DAC_MAX
+            ).astype(np.complex64)
+
+            with suppress_c_stderr():
+                sdr.tx(tx)
+            time.sleep(0.05)
+            for _ in range(2):
+                safe_rx(sdr)
+            rx = safe_rx(sdr)
+
+            snr_db = calculate_snr_db(rx, fs, tone_freq)
+            return snr_db, tone_freq, timeout_ok
+        finally:
+            cleanup_sdr(sdr)

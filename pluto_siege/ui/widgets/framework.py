@@ -104,6 +104,7 @@ def _put(win: "curses.window", y: int, x: int, text: str, attr: int = 0) -> None
     h, w = win.getmaxyx()
     if y < 0 or y >= h or x < 0 or x >= w:
         return
+    text = text.replace("\r", "").replace("\n", " ")
     text = text[: max(0, w - 1 - x)]
     try:
         win.addstr(y, x, text, attr)
@@ -243,6 +244,11 @@ def scroll_view(win: "curses.window", subtitle: str, lines: list[tuple[str, int]
                 hint: str = "Enter/Esc = back",
                 exit_keys: tuple[int, ...] = (KEY_ESC,) + KEY_ENTER) -> int:
     """Show scrollable lines until one of exit_keys is pressed. Returns that key."""
+    flat_lines: list[tuple[str, int]] = []
+    for text, pair in lines:
+        for sub in str(text).splitlines():
+            flat_lines.append((sub, pair))
+    lines = flat_lines or [("", 0)]
     top = 0
     flush_input(win)
     win.nodelay(False)
@@ -408,12 +414,19 @@ def edit_number(win: "curses.window", prompt: str, initial: Any, cast_type: type
             return initial
         text = raw
         try:
-            val = cast_type(raw)
-        except ValueError:
+            num = float(raw)
+            if not math.isfinite(num):
+                _flash(win, "Value must be finite.", C_ERR)
+                continue
+            if cast_type is int:
+                if not num.is_integer():
+                    _flash(win, "Value must be an integer.", C_ERR)
+                    continue
+                val = int(num)
+            else:
+                val = num
+        except (ValueError, OverflowError):
             _flash(win, "Invalid number.", C_ERR)
-            continue
-        if isinstance(val, float) and not math.isfinite(val):
-            _flash(win, "Value must be finite.", C_ERR)
             continue
         if val < min_val:
             _flash(win, f"Must be >= {min_val}", C_ERR)
