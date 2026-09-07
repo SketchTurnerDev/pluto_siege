@@ -19,6 +19,7 @@
 import math
 
 import numpy as np
+from numpy.typing import NDArray
 
 from pluto_siege.constants import (
     DB_EPSILON,
@@ -30,7 +31,9 @@ from pluto_siege.constants import (
 )
 
 
-def subwindow_powers(data: np.ndarray, sub_size: int = DETECT_SUB_WINDOW) -> np.ndarray:
+def subwindow_powers(
+    data: NDArray[np.complex64], sub_size: int = DETECT_SUB_WINDOW
+) -> NDArray[np.float64]:
     """Mean power of each consecutive sub-window, normalised to full scale (linear)."""
     if data.dtype != np.complex64 or not data.flags["C_CONTIGUOUS"]:
         data = np.ascontiguousarray(data, dtype=np.complex64)
@@ -58,17 +61,23 @@ def dbfs_to_power(dbfs: float) -> float:
     return float(10.0 ** (dbfs / 10.0))
 
 
-def max_subwindow_dbfs(data: np.ndarray, sub_size: int = DETECT_SUB_WINDOW) -> float:
+def max_subwindow_dbfs(
+    data: NDArray[np.complex64], sub_size: int = DETECT_SUB_WINDOW
+) -> float:
     """Peak sub-window level, used for triggering."""
     return power_to_dbfs(float(np.max(subwindow_powers(data, sub_size))))
 
 
-def noise_floor_dbfs(powers: np.ndarray, percentile: float = NF_PERCENTILE) -> float:
+def noise_floor_dbfs(
+    powers: NDArray[np.float64], percentile: float = NF_PERCENTILE
+) -> float:
     """Noise floor from pooled sub-window powers."""
     return power_to_dbfs(float(np.percentile(powers, percentile)))
 
 
-def is_saturated(data: np.ndarray, margin: float = SATURATION_MARGIN) -> bool:
+def is_saturated(
+    data: NDArray[np.complex64], margin: float = SATURATION_MARGIN
+) -> bool:
     if data.size == 0:
         return False
     limit = margin * RX_FULL_SCALE
@@ -78,8 +87,12 @@ def is_saturated(data: np.ndarray, margin: float = SATURATION_MARGIN) -> bool:
     return bool(max(float(flat.max()), -float(flat.min())) >= limit)
 
 
-def calculate_snr_db(rx: np.ndarray, fs: float, tone_freq: float,
-                     tone_bins: int = LOOPBACK_TONE_BINS) -> float:
+def calculate_snr_db(
+    rx: NDArray[np.complex64],
+    fs: float,
+    tone_freq: float,
+    tone_bins: int = LOOPBACK_TONE_BINS,
+) -> float:
     """Calculate Signal-to-Noise Ratio (SNR) in dB from Hanning-windowed FFT spectrum."""
     rx_norm = rx / RX_FULL_SCALE
     spectrum = np.abs(np.fft.fftshift(

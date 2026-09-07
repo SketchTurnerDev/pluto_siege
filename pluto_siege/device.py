@@ -20,12 +20,14 @@ from typing import Any, Optional, Protocol, Tuple, runtime_checkable
 
 import os
 import numpy as np
+from numpy.typing import NDArray
 
 try:
     import adi
 except Exception:
     adi = None  # type: ignore[assignment]
 
+from pluto_siege.config import AppConfig
 from pluto_siege.constants import (
     IO_TIMEOUT_FACTOR,
     IO_TIMEOUT_MIN_MS,
@@ -52,8 +54,8 @@ class SDRDevice(Protocol):
     loopback: int
     ctx: Any
 
-    def rx(self) -> np.ndarray: ...
-    def tx(self, data: np.ndarray) -> None: ...
+    def rx(self) -> NDArray[np.complex64]: ...
+    def tx(self, data: NDArray[np.complex64]) -> None: ...
     def rx_destroy_buffer(self) -> None: ...
     def tx_destroy_buffer(self) -> None: ...
 
@@ -134,7 +136,7 @@ def set_io_timeout(sdr: SDRDevice, expected_seconds: float) -> bool:
         return False
 
 
-def safe_rx(sdr: SDRDevice) -> np.ndarray:
+def safe_rx(sdr: SDRDevice) -> NDArray[np.complex64]:
     """Receive one buffer as contiguous complex64. Raises if the link is dead."""
     with suppress_c_stderr():
         data = sdr.rx()
@@ -143,56 +145,69 @@ def safe_rx(sdr: SDRDevice) -> np.ndarray:
     return np.ascontiguousarray(data, dtype=np.complex64)
 
 
-def _apply_rx_settings(sdr: SDRDevice, use_sr: int, freq: int, buf_size: int) -> None:
+def _apply_rx_settings(sdr: SDRDevice, use_sr: int, freq: int, buf_size: int, rx_gain: float) -> None:
     """Receiver half of a configuration, shared by capture and loopback."""
     sdr.rx_rf_bandwidth = min(use_sr, MAX_RF_BW)
     sdr.rx_lo = int(freq)
     sdr.rx_buffer_size = int(buf_size)
     sdr.gain_control_mode_chan0 = "manual"
-    sdr.rx_hardwaregain_chan0 = float(CONFIG.rx_gain)
+    sdr.rx_hardwaregain_chan0 = float(rx_gain)
 
 
-def _apply_tx_settings(sdr: SDRDevice, use_sr: int, freq: int) -> None:
+def _apply_tx_settings(sdr: SDRDevice, use_sr: int, freq: int, tx_gain: float) -> None:
     """Transmitter half of a configuration, shared by replay and loopback."""
     sdr.tx_rf_bandwidth = min(use_sr, MAX_RF_BW)
     sdr.tx_lo = int(freq)
-    sdr.tx_hardwaregain_chan0 = float(CONFIG.tx_gain)
+    sdr.tx_hardwaregain_chan0 = float(tx_gain)
 
 
-def cfg_rx(sdr: SDRDevice, sr: Optional[int] = None, freq: Optional[int] = None) -> bool:
+def cfg_rx(
+    sdr: SDRDevice,
+    sr: Optional[int] = None,
+    freq: Optional[int] = None,
+    config: Optional[AppConfig] = None,
+) -> bool:
     """Configure the receiver. Returns False if the I/O timeout is unavailable."""
+    cfg = CONFIG if config is None else config
     with suppress_c_stderr():
         cleanup_sdr(sdr)
-        use_sr = int(CONFIG.sample_rate if sr is None else sr)
-        buf_size = int(CONFIG.rx_buffer_size)
+        use_sr = int(cfg.sample_rate if sr is None else sr)
+        buf_size = int(cfg.rx_buffer_size)
         sdr.sample_rate = use_sr
         _apply_rx_settings(
-            sdr, use_sr, CONFIG.rx_freq if freq is None else freq, buf_size
+            sdr, use_sr, cfg.rx_freq if freq is None else freq, buf_size, cfg.rx_gain
         )
         return set_io_timeout(sdr, buf_size / use_sr)
 
 
-def cfg_tx(sdr: SDRDevice, sr: Optional[int] = None, freq: Optional[int] = None) -> None:
+def cfg_tx(
+    sdr: SDRDevice,
+    sr: Optional[int] = None,
+    freq: Optional[int] = None,
+    config: Optional[AppConfig] = None,
+) -> None:
     """Configure the transmitter."""
+    cfg = CONFIG if config is None else config
     with suppress_c_stderr():
         cleanup_sdr(sdr)
-        use_sr = int(CONFIG.sample_rate if sr is None else sr)
+        use_sr = int(cfg.sample_rate if sr is None else sr)
         sdr.sample_rate = use_sr
         _apply_tx_settings(
-            sdr, use_sr, CONFIG.tx_freq if freq is None else freq
+            sdr, use_sr, cfg.tx_freq if freq is None else freq, cfg.tx_gain
         )
         sdr.tx_cyclic_buffer = False
 
 
-def cfg_loopback(sdr: SDRDevice) -> bool:
+def cfg_loopback(sdr: SDRDevice, config: Optional[AppConfig] = None) -> bool:
     """Configure the digital loopback. Returns False if no I/O timeout."""
+    cfg = CONFIG if config is None else config
     with suppress_c_stderr():
         cleanup_sdr(sdr)
-        use_sr = int(CONFIG.sample_rate)
-        buf_size = int(CONFIG.rx_buffer_size)
+        use_sr = int(cfg.sample_rate)
+        buf_size = int(cfg.rx_buffer_size)
         sdr.sample_rate = use_sr
-        _apply_rx_settings(sdr, use_sr, CONFIG.rx_freq, buf_size)
-        _apply_tx_settings(sdr, use_sr, CONFIG.tx_freq)
+        _apply_rx_settings(sdr, use_sr, cfg.rx_freq, buf_size, cfg.rx_gain)
+        _apply_tx_settings(sdr, use_sr, cfg.tx_freq, cfg.tx_gain)
         sdr.loopback = 1
         sdr.tx_cyclic_buffer = True
         return set_io_timeout(sdr, buf_size / use_sr)

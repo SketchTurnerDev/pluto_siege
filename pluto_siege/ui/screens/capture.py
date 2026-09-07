@@ -19,12 +19,14 @@
 import curses
 import os
 import time
+from typing import Optional
 
+from pluto_siege.config import AppConfig
 from pluto_siege.constants import (
     IO_TIMEOUT_UNAVAILABLE,
     RECORDS_DIR,
 )
-from pluto_siege.device import cleanup_sdr
+from pluto_siege.device import SDRDevice, cleanup_sdr
 from pluto_siege.engine import CaptureEngine
 from pluto_siege.settings import CONFIG
 from pluto_siege.ui.widgets.framework import (
@@ -44,7 +46,12 @@ from pluto_siege.ui.widgets.framework import (
 )
 
 
-def screen_capture(win: "curses.window", sdr, hw_model: str) -> None:
+def screen_capture(
+    win: "curses.window",
+    sdr: SDRDevice,
+    hw_model: str,
+    config: Optional[AppConfig] = None,
+) -> None:
     """Listen for a burst, record with pre-trigger history, and save it as SigMF."""
     log: list[tuple[str, int]] = []
 
@@ -62,7 +69,7 @@ def screen_capture(win: "curses.window", sdr, hw_model: str) -> None:
         render_log("Please wait...")
         win.refresh()
 
-        engine = CaptureEngine(sdr)
+        engine = CaptureEngine(sdr, config=config)
         engine.prepare()
 
         if not engine.io_timeout_available:

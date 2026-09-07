@@ -33,6 +33,7 @@ from pluto_siege.settings import brief, freq_bounds
 
 # numpy is imported lazily via the callers; keep the module importable without it.
 import numpy as np
+from numpy.typing import NDArray
 
 
 def to_sigmf_utc(dt: datetime.datetime) -> str:
@@ -40,7 +41,7 @@ def to_sigmf_utc(dt: datetime.datetime) -> str:
             .isoformat(timespec="microseconds").replace("+00:00", "Z"))
 
 
-def save_sigmf_pair(base_path: str, array: np.ndarray, freq: int, sr: int,
+def save_sigmf_pair(base_path: str, array: NDArray[np.complex64], freq: int, sr: int,
                     timestamp_iso: str, hw_model: str) -> None:
     """Write a SigMF data/meta pair, leaving no partial files behind on error.
 
@@ -92,7 +93,9 @@ def save_sigmf_pair(base_path: str, array: np.ndarray, freq: int, sr: int,
         raise
 
 
-def load_sigmf_meta(path: str) -> tuple[Optional[int], Optional[int], Optional[str]]:
+def load_sigmf_meta(
+    path: str, bounds: Optional[tuple[int, int]] = None
+) -> tuple[Optional[int], Optional[int], Optional[str]]:
     """Read a recording's own sample rate and frequency from its SigMF metadata.
 
     Returns (sample_rate, frequency, problem). On success problem is None; on any
@@ -142,7 +145,7 @@ def load_sigmf_meta(path: str) -> tuple[Optional[int], Optional[int], Optional[s
     if not srlo <= sr <= srhi:
         return None, None, (f"rate {brief(sr, 9)} Hz outside "
                             f"{srlo / 1e3:g}k-{srhi / 1e6:g}M Hz")
-    lo, hi = freq_bounds()
+    lo, hi = bounds if bounds is not None else freq_bounds()
     if not lo <= freq <= hi:
         return None, None, (f"{brief(f'{freq / 1e6:.3f}', 11)} MHz outside "
                             f"{lo / 1e6:g}-{hi / 1e6:g} MHz")

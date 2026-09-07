@@ -25,6 +25,7 @@ import time
 from typing import Callable, List, Optional, Tuple
 
 import numpy as np
+from numpy.typing import NDArray
 
 from pluto_siege.constants import (
     BYTES_PER_SAMPLE,
@@ -62,6 +63,7 @@ from pluto_siege.dsp import (
     power_to_dbfs,
     subwindow_powers,
 )
+from pluto_siege.config import AppConfig
 from pluto_siege.settings import CONFIG
 from pluto_siege.sigmf import load_sigmf_meta, save_sigmf_pair, to_sigmf_utc
 
@@ -69,8 +71,9 @@ from pluto_siege.sigmf import load_sigmf_meta, save_sigmf_pair, to_sigmf_utc
 class CaptureEngine:
     """Encapsulates receiver setup, noise estimation, trigger detection, and sample collection."""
 
-    def __init__(self, sdr: SDRDevice):
+    def __init__(self, sdr: SDRDevice, config: Optional[AppConfig] = None):
         self.sdr = sdr
+        self.config: AppConfig = config if config is not None else CONFIG
         self.actual_sr: int = 0
         self.actual_freq: int = 0
         self.buf_size: int = 0
@@ -82,14 +85,14 @@ class CaptureEngine:
         # State outputs for UI / callers
         self.current_level_dbfs: float = -120.0
         self.current_saturated: bool = False
-        self.captured_data: Optional[np.ndarray] = None
+        self.captured_data: Optional[NDArray[np.complex64]] = None
         self.start_time: Optional[datetime.datetime] = None
         self.is_partial: bool = False
         self.is_aborted: bool = False
 
     def prepare(self) -> None:
         """Configure SDR RX, validate RAM budget, and estimate noise floor/thresholds."""
-        self.io_timeout_available = cfg_rx(self.sdr)
+        self.io_timeout_available = cfg_rx(self.sdr, config=self.config)
         self.actual_sr = int(self.sdr.sample_rate)
         self.actual_freq = int(self.sdr.rx_lo)
 
@@ -102,10 +105,10 @@ class CaptureEngine:
         max_post_buffers = max(
             1,
             math.ceil(
-                (CONFIG.max_post_trigger_seconds * self.actual_sr) / self.buf_size
+                (self.config.max_post_trigger_seconds * self.actual_sr) / self.buf_size
             ),
         )
-        total_buffers = CONFIG.pre_trigger_buffers + 1 + max_post_buffers
+        total_buffers = self.config.pre_trigger_buffers + 1 + max_post_buffers
         est_ram = total_buffers * self.buf_size * BYTES_PER_SAMPLE * RAM_SAFETY_FACTOR
         if est_ram > MAX_RAM_BYTES:
             raise ValueError(
@@ -113,28 +116,29 @@ class CaptureEngine:
                 "Reduce SR or max_post_trigger_seconds."
             )
 
-        if CONFIG.auto_threshold:
+        if self.config.auto_threshold:
             nf_pool = [subwindow_powers(probe)]
             for _ in range(NF_PROBE_BUFFERS - 1):
                 nf_pool.append(subwindow_powers(safe_rx(self.sdr)))
             self.noise_floor = noise_floor_dbfs(np.concatenate(nf_pool))
-            self.trigger_threshold = self.noise_floor + float(CONFIG.auto_trigger_margin)
+            self.trigger_threshold = self.noise_floor + float(self.config.auto_trigger_margin)
             self.release_threshold = self.noise_floor + RELEASE_MARGIN_DB
         else:
-            self.trigger_threshold = float(CONFIG.manual_threshold)
+            self.trigger_threshold = float(self.config.manual_threshold)
             self.release_threshold = self.trigger_threshold - MANUAL_RELEASE_DROP_DB
 
     def _collect_post_trigger_chunks(
         self,
-        initial_data: np.ndarray,
+        initial_data: NDArray[np.complex64],
         check_abort: Callable[[], bool],
         max_post_buffers: int,
         silence_buf_limit: int,
-    ) -> List[np.ndarray]:
+    ) -> List[NDArray[np.complex64]]:
         """Collect post-trigger sample buffers until silence or timeout."""
         chunks = [initial_data]
         silence_count = 0
         post_buf_count = 0
+        release_power = dbfs_to_power(self.release_threshold)
         while silence_count < silence_buf_limit and post_buf_count < max_post_buffers:
             if check_abort():
                 self.is_partial = True
@@ -144,15 +148,15 @@ class CaptureEngine:
             post_buf_count += 1
             silence_count = (
                 silence_count + 1
-                if max_subwindow_dbfs(d) < self.release_threshold
+                if float(np.max(subwindow_powers(d))) < release_power
                 else 0
             )
         return chunks
 
     def _finalize_captured_buffer(
         self,
-        pre_trigger_data: List[np.ndarray],
-        chunks: List[np.ndarray],
+        pre_trigger_data: List[NDArray[np.complex64]],
+        chunks: List[NDArray[np.complex64]],
         prefix_samples: int,
         trigger_time: datetime.datetime,
     ) -> None:
@@ -160,8 +164,12 @@ class CaptureEngine:
         if any(is_saturated(chunk) for chunk in chunks):
             self.current_saturated = True
 
-        dc_offset = np.complex64(
-            np.mean([chunk.mean(dtype=np.complex128) for chunk in pre_trigger_data])
+        dc_offset = (
+            np.complex64(
+                np.mean([chunk.mean(dtype=np.complex128) for chunk in pre_trigger_data])
+            )
+            if pre_trigger_data
+            else np.complex64(0)
         )
 
         total_samples = sum(c.size for c in chunks)
@@ -185,20 +193,20 @@ class CaptureEngine:
         on_meter_update: Optional[Callable[[float, bool], None]] = None,
     ) -> None:
         """Main listening loop."""
-        ring: deque = deque(maxlen=CONFIG.pre_trigger_buffers)
-        for _ in range(CONFIG.pre_trigger_buffers):
+        ring: deque = deque(maxlen=self.config.pre_trigger_buffers)
+        for _ in range(self.config.pre_trigger_buffers):
             ring.append(safe_rx(self.sdr))
 
         trigger_power = dbfs_to_power(self.trigger_threshold)
         max_post_buffers = max(
             1,
             math.ceil(
-                (CONFIG.max_post_trigger_seconds * self.actual_sr) / self.buf_size
+                (self.config.max_post_trigger_seconds * self.actual_sr) / self.buf_size
             ),
         )
         silence_buf_limit = max(
             1,
-            math.ceil((CONFIG.silence_seconds * self.actual_sr) / self.buf_size),
+            math.ceil((self.config.silence_seconds * self.actual_sr) / self.buf_size),
         )
 
         while True:
@@ -256,7 +264,7 @@ class CaptureEngine:
 
 class TransmitEngine:
     @staticmethod
-    def load_payload(path: str) -> np.ndarray:
+    def load_payload(path: str) -> NDArray[np.complex64]:
         st = os.stat(path, follow_symlinks=False)
         if not stat.S_ISREG(st.st_mode):
             raise ValueError("Target is not a regular file.")
@@ -284,16 +292,24 @@ class TransmitEngine:
         return data
 
     @classmethod
-    def prepare_transmission(cls, path: str) -> Tuple[np.ndarray, int, int]:
-        use_sr, use_freq, problem = load_sigmf_meta(path)
+    def prepare_transmission(
+        cls, path: str, bounds: Optional[Tuple[int, int]] = None
+    ) -> Tuple[NDArray[np.complex64], int, int]:
+        use_sr, use_freq, problem = load_sigmf_meta(path, bounds=bounds)
         if problem is not None or use_sr is None or use_freq is None:
             raise ValueError(f"untrusted recording - {problem}")
         data = cls.load_payload(path)
         return data, use_sr, use_freq
 
     @staticmethod
-    def transmit(sdr: SDRDevice, data: np.ndarray, sample_rate: int, freq: int) -> bool:
-        cfg_tx(sdr, sample_rate, freq)
+    def transmit(
+        sdr: SDRDevice,
+        data: NDArray[np.complex64],
+        sample_rate: int,
+        freq: int,
+        config: Optional[AppConfig] = None,
+    ) -> bool:
+        cfg_tx(sdr, sample_rate, freq, config=config)
         actual_sr = int(sdr.sample_rate)
         timeout_ok = set_io_timeout(sdr, data.size / actual_sr)
         try:
@@ -310,9 +326,14 @@ class TransmitEngine:
 
 class LoopbackTester:
     @staticmethod
-    def run_test(sdr: SDRDevice, sample_rate: int, rx_buffer_size: int) -> Tuple[float, float, bool]:
+    def run_test(
+        sdr: SDRDevice,
+        sample_rate: int,
+        rx_buffer_size: int,
+        config: Optional[AppConfig] = None,
+    ) -> Tuple[float, float, bool]:
         try:
-            timeout_ok = cfg_loopback(sdr)
+            timeout_ok = cfg_loopback(sdr, config=config)
             fs = int(sdr.sample_rate)
             n_samples = int(rx_buffer_size)
             tone_bin = max(1, round(LOOPBACK_TONE_HZ * n_samples / fs))

@@ -16,7 +16,7 @@
 
 """Settings module re-exporting AppConfig instance for compatibility."""
 
-from typing import Any, Tuple
+from typing import Any, Optional, Tuple
 
 from pluto_siege.config import (
     AppConfig,
@@ -32,8 +32,8 @@ CONFIG = load_settings()
 SETTINGS = CONFIG
 
 
-def save_settings() -> bool:
-    return _save_config(CONFIG)
+def save_settings(cfg: Optional[AppConfig] = None) -> bool:
+    return _save_config(CONFIG if cfg is None else cfg)
 
 
 def validate_settings(s: Any) -> dict:
@@ -52,5 +52,5 @@ def brief(text: Any, limit: int = 18) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1] + "~"
 
 
-def freq_bounds() -> Tuple[int, int]:
-    return CONFIG.freq_bounds
+def freq_bounds(cfg: Optional[AppConfig] = None) -> Tuple[int, int]:
+    return (CONFIG if cfg is None else cfg).freq_bounds

@@ -16,8 +16,10 @@
 
 """Main menu, startup connection screen, and application entry point."""
 
+import atexit
 import signal
 import sys
+import threading
 import time
 from typing import Any, Optional
 
@@ -47,6 +49,52 @@ from pluto_siege.ui.screens.loopback import screen_loopback
 from pluto_siege.ui.screens.settings import screen_settings
 from pluto_siege.ui.screens.transmit import screen_transmit
 
+_ACTIVE_SDR: Optional[SDRDevice] = None
+_SDR_LOCK = threading.Lock()
+
+
+def _set_active_sdr(sdr: Optional[SDRDevice]) -> None:
+    global _ACTIVE_SDR
+    with _SDR_LOCK:
+        _ACTIVE_SDR = sdr
+
+
+def _cleanup_active_sdr() -> None:
+    global _ACTIVE_SDR
+    with _SDR_LOCK:
+        sdr = _ACTIVE_SDR
+        _ACTIVE_SDR = None
+    if sdr is not None:
+        try:
+            release_sdr(sdr)
+        except Exception:
+            pass
+
+
+atexit.register(_cleanup_active_sdr)
+
+# On Windows, register console control handler for Ctrl+C, Ctrl+Break, and Close events
+_GLOBAL_WIN_CTRL_HANDLER: Any = None
+if sys.platform == "win32":
+    try:
+        import ctypes
+
+        _HandlerRoutine = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_ulong)
+        _CTRL_CLOSE_EVENT = 2
+        _CTRL_LOGOFF_EVENT = 5
+        _CTRL_SHUTDOWN_EVENT = 6
+
+        def _win_ctrl_handler(dw_ctrl_type: int) -> bool:
+            if dw_ctrl_type in (_CTRL_CLOSE_EVENT, _CTRL_LOGOFF_EVENT, _CTRL_SHUTDOWN_EVENT):
+                _cleanup_active_sdr()
+                return True
+            return False
+
+        _GLOBAL_WIN_CTRL_HANDLER = _HandlerRoutine(_win_ctrl_handler)
+        ctypes.windll.kernel32.SetConsoleCtrlHandler(_GLOBAL_WIN_CTRL_HANDLER, True)
+    except Exception:
+        pass
+
 
 def reconnect_sdr(win: "curses.window", sdr: Optional[SDRDevice], hw_model: str,
                   previous_uri: str) -> tuple[Optional[SDRDevice], str]:
@@ -65,6 +113,7 @@ def reconnect_sdr(win: "curses.window", sdr: Optional[SDRDevice], hw_model: str,
             (f"Still connected to {previous_uri}.", C_WARN),
         ])
         return sdr, hw_model
+    _set_active_sdr(new_sdr)
     release_sdr(sdr)
     message_box(win, "Reconnected", [(f"Connected: {model} at {uri}", C_OK)])
     return new_sdr, model
@@ -85,6 +134,7 @@ def connect_screen(win: "curses.window") -> tuple[Optional[SDRDevice], str]:
             win.refresh()
             try:
                 sdr, hw_model = open_sdr(uri, hw_model)
+                _set_active_sdr(sdr)
                 _put(win, start_y + 1, 2, f"Connected: {hw_model}", cp(C_OK))
                 win.refresh()
                 time.sleep(0.4)
@@ -151,23 +201,24 @@ def curses_app(win: "curses.window") -> None:
             if items[idx] == "Exit":
                 break
             if items[idx] == "Capture":
-                screen_capture(win, sdr, hw_model)
+                screen_capture(win, sdr, hw_model, config=CONFIG)
             elif items[idx] == "Transmit":
-                screen_transmit(win, sdr)
+                screen_transmit(win, sdr, config=CONFIG)
             elif items[idx] == "Loopback Test":
-                screen_loopback(win, sdr)
+                screen_loopback(win, sdr, config=CONFIG)
             elif items[idx] == "Settings":
                 uri_before = CONFIG.pluto_uri
-                screen_settings(win)
+                screen_settings(win, config=CONFIG)
                 if CONFIG.pluto_uri != uri_before:
                     sdr, hw_model = reconnect_sdr(win, sdr, hw_model, uri_before)
     except KeyboardInterrupt:
         pass
     finally:
-        release_sdr(sdr)
+        _cleanup_active_sdr()
 
 
-def sigterm_handler(signum: int, frame: Any) -> None:
+def sig_handler(signum: int, frame: Any) -> None:
+    _cleanup_active_sdr()
     raise KeyboardInterrupt
 
 
@@ -175,7 +226,13 @@ def main() -> None:
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         print("Requires an interactive terminal.", file=sys.stderr)
         sys.exit(1)
-    signal.signal(signal.SIGTERM, sigterm_handler)
+    for sig_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, sig_name, None)
+        if sig is not None:
+            try:
+                signal.signal(sig, sig_handler)
+            except (ValueError, OSError):
+                pass
     try:
         curses.wrapper(curses_app)
     except KeyboardInterrupt:
@@ -183,6 +240,8 @@ def main() -> None:
     except curses.error as e:
         print(f"Terminal error: {e}", file=sys.stderr)
         sys.exit(1)
+    finally:
+        _cleanup_active_sdr()
     print("Goodbye!")
 
 

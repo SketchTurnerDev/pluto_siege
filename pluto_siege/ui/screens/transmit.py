@@ -22,6 +22,7 @@ import glob
 import os
 from typing import Optional
 
+from pluto_siege.config import AppConfig
 from pluto_siege.constants import (
     BYTES_PER_SAMPLE,
     IO_TIMEOUT_UNAVAILABLE,
@@ -116,7 +117,12 @@ def pick_recording(win: "curses.window") -> Optional[str]:
         return target_file
 
 
-def do_transmit(win: "curses.window", sdr: SDRDevice, path: str) -> int:
+def do_transmit(
+    win: "curses.window",
+    sdr: SDRDevice,
+    path: str,
+    config: Optional[AppConfig] = None,
+) -> int:
     """Replay one recording, then show the result. Returns the key that closed it."""
     log: list[tuple[str, int]] = []
 
@@ -129,13 +135,14 @@ def do_transmit(win: "curses.window", sdr: SDRDevice, path: str) -> int:
         log.append(("Configuring transmitter...", C_DIM))
         render()
 
-        data, use_sr, use_freq = TransmitEngine.prepare_transmission(path)
+        bounds = config.freq_bounds if config is not None else None
+        data, use_sr, use_freq = TransmitEngine.prepare_transmission(path, bounds=bounds)
 
         log.append((f"{use_freq / 1e6:.3f} MHz  {use_sr / 1e6:.2f} MSPS  {data.size:,} Samples", C_DIM))
         log.append((f"Transmitting recording: {os.path.basename(path)}...", C_DIM))
         render()
 
-        timeout_ok = TransmitEngine.transmit(sdr, data, use_sr, use_freq)
+        timeout_ok = TransmitEngine.transmit(sdr, data, use_sr, use_freq, config=config)
         if not timeout_ok:
             log.append((IO_TIMEOUT_UNAVAILABLE, C_WARN))
 
@@ -148,10 +155,12 @@ def do_transmit(win: "curses.window", sdr: SDRDevice, path: str) -> int:
                        hint="Enter = replay ▎ Esc = back", exit_keys=(KEY_ESC,) + KEY_ENTER)
 
 
-def screen_transmit(win: "curses.window", sdr: SDRDevice) -> None:
+def screen_transmit(
+    win: "curses.window", sdr: SDRDevice, config: Optional[AppConfig] = None
+) -> None:
     path = pick_recording(win)
     if path is None:
         return
     while True:
-        if do_transmit(win, sdr, path) == KEY_ESC:
+        if do_transmit(win, sdr, path, config=config) == KEY_ESC:
             return

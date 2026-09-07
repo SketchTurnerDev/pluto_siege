@@ -18,6 +18,9 @@
 
 import curses
 
+from typing import Optional
+
+from pluto_siege.config import AppConfig
 from pluto_siege.constants import (
     IO_TIMEOUT_UNAVAILABLE,
     LOOPBACK_MIN_SNR_DB,
@@ -39,8 +42,11 @@ from pluto_siege.ui.widgets.framework import (
 )
 
 
-def screen_loopback(win: "curses.window", sdr: SDRDevice) -> None:
+def screen_loopback(
+    win: "curses.window", sdr: SDRDevice, config: Optional[AppConfig] = None
+) -> None:
     """Send a tone through the chip's digital loopback and measure its SNR."""
+    cfg = CONFIG if config is None else config
     log: list[tuple[str, int]] = []
 
     def render(hint: str = "Please wait...") -> None:
@@ -53,7 +59,7 @@ def screen_loopback(win: "curses.window", sdr: SDRDevice) -> None:
         render()
 
         snr_db, tone_freq, timeout_ok = LoopbackTester.run_test(
-            sdr, CONFIG.sample_rate, CONFIG.rx_buffer_size
+            sdr, cfg.sample_rate, cfg.rx_buffer_size, config=cfg
         )
         if not timeout_ok:
             log.append((IO_TIMEOUT_UNAVAILABLE, C_WARN))

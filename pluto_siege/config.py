@@ -57,23 +57,6 @@ class AppConfig:
     max_post_trigger_seconds: float = 4.0
     permit_out_of_spec_frequency: bool = False
 
-    def __getitem__(self, item: str) -> Any:
-        return getattr(self, item)
-
-    def __setitem__(self, key: str, value: Any) -> None:
-        if not hasattr(self, key):
-            raise KeyError(f"Invalid setting key: {key}")
-        setattr(self, key, value)
-
-    def __contains__(self, item: str) -> bool:
-        return hasattr(self, item)
-
-    def get(self, item: str, default: Any = None) -> Any:
-        return getattr(self, item, default)
-
-    def items(self):
-        return asdict(self).items()
-
     def update(self, new_values: Dict[str, Any]) -> None:
         for k, v in new_values.items():
             if hasattr(self, k):
