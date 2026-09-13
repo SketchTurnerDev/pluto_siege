@@ -266,7 +266,8 @@ class CaptureEngine:
 class TransmitEngine:
     @staticmethod
     def load_payload(path: str) -> NDArray[np.complex64]:
-        st = os.stat(path, follow_symlinks=False)
+        clean_path = path.removesuffix(".sigmf-meta").removesuffix(".sigmf-data") + ".sigmf-data"
+        st = os.stat(clean_path, follow_symlinks=False)
         if not stat.S_ISREG(st.st_mode):
             raise ValueError("Target is not a regular file.")
         if st.st_size == 0:
@@ -277,7 +278,7 @@ class TransmitEngine:
         if n_samples > MAX_TX_BURST_SAMPLES:
             raise ValueError(f"Recording too large: {n_samples} samples (limit {MAX_TX_BURST_SAMPLES})")
 
-        data = np.fromfile(path, dtype="<c8", count=n_samples)
+        data = np.fromfile(clean_path, dtype="<c8", count=n_samples)
         if data.size != n_samples:
             raise ValueError("Recording shrank while being read")
 

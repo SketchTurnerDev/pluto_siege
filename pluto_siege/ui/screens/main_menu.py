@@ -43,6 +43,7 @@ from pluto_siege.ui.widgets.framework import (
     init_colors,
     menu_select,
     message_box,
+    set_cursor_visible,
 )
 from pluto_siege.ui.screens.capture import screen_capture
 from pluto_siege.ui.screens.loopback import screen_loopback
@@ -87,9 +88,12 @@ if sys.platform == "win32":
         _CTRL_SHUTDOWN_EVENT = 6
 
         def _win_ctrl_handler(dw_ctrl_type: int) -> bool:
-            if dw_ctrl_type in (_CTRL_C_EVENT, _CTRL_BREAK_EVENT, _CTRL_CLOSE_EVENT, _CTRL_LOGOFF_EVENT, _CTRL_SHUTDOWN_EVENT):
+            if dw_ctrl_type in (_CTRL_CLOSE_EVENT, _CTRL_LOGOFF_EVENT, _CTRL_SHUTDOWN_EVENT):
                 _cleanup_active_sdr()
                 return True
+            elif dw_ctrl_type in (_CTRL_C_EVENT, _CTRL_BREAK_EVENT):
+                _cleanup_active_sdr()
+                return False
             return False
 
         _GLOBAL_WIN_CTRL_HANDLER = _HandlerRoutine(_win_ctrl_handler)
@@ -118,10 +122,17 @@ def reconnect_sdr(win: "curses.window", sdr: Optional[SDRDevice], hw_model: str,
             _set_active_sdr(prev_sdr)
         except Exception:
             pass
-        message_box(win, "Reconnect Failed", [
-            (f"Could not open {uri}: {e}", C_ERR),
-            (f"Reverted to {previous_uri}.", C_WARN),
-        ])
+        if prev_sdr is not None:
+            message_box(win, "Reconnect Failed", [
+                (f"Could not open {uri}: {e}", C_ERR),
+                (f"Reverted to {previous_uri}.", C_WARN),
+            ])
+        else:
+            message_box(win, "Reconnect Failed", [
+                (f"Could not open {uri}: {e}", C_ERR),
+                (f"Could not revert to {previous_uri}.", C_ERR),
+                ("Device disconnected.", C_WARN),
+            ])
         return prev_sdr, hw_model
     _set_active_sdr(new_sdr)
     message_box(win, "Reconnected", [(f"Connected: {model} at {uri}", C_OK)])
@@ -182,14 +193,14 @@ def connect_screen(win: "curses.window") -> tuple[Optional[SDRDevice], str]:
         if k == KEY_ESC:
             return None, hw_model
         elif k in KEY_ENTER:
-            screen_settings(win)
+            screen_settings(win, config=CONFIG)
             attempt = CONFIG.pluto_uri != uri
         elif k in (ord("r"), ord("R")):
             attempt = True
 
 
 def curses_app(win: "curses.window") -> None:
-    hide_cursor(False)
+    set_cursor_visible(False)
     try:
         curses.set_escdelay(ESC_DELAY_MS)
     except (AttributeError, curses.error):
@@ -212,16 +223,30 @@ def curses_app(win: "curses.window") -> None:
             if items[idx] == "Exit":
                 break
             if items[idx] == "Capture":
-                screen_capture(win, sdr, hw_model, config=CONFIG)
+                if sdr is None:
+                    message_box(win, "Error", [("SDR device is not connected.", C_ERR)])
+                else:
+                    screen_capture(win, sdr, hw_model, config=CONFIG)
             elif items[idx] == "Transmit":
-                screen_transmit(win, sdr, config=CONFIG)
+                if sdr is None:
+                    message_box(win, "Error", [("SDR device is not connected.", C_ERR)])
+                else:
+                    screen_transmit(win, sdr, config=CONFIG)
             elif items[idx] == "Loopback Test":
-                screen_loopback(win, sdr, config=CONFIG)
+                if sdr is None:
+                    message_box(win, "Error", [("SDR device is not connected.", C_ERR)])
+                else:
+                    screen_loopback(win, sdr, config=CONFIG)
             elif items[idx] == "Settings":
                 uri_before = CONFIG.pluto_uri
                 screen_settings(win, config=CONFIG)
                 if CONFIG.pluto_uri != uri_before:
-                    sdr, hw_model = reconnect_sdr(win, sdr, hw_model, uri_before)
+                    new_sdr, new_hw = reconnect_sdr(win, sdr, hw_model, uri_before)
+                    if new_sdr is None:
+                        new_sdr, new_hw = connect_screen(win)
+                        if new_sdr is None:
+                            break
+                    sdr, hw_model = new_sdr, new_hw
     except KeyboardInterrupt:
         pass
     finally:

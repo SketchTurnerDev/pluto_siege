@@ -17,13 +17,19 @@
 """Hardware limits, detection tuning, and application-wide constants."""
 
 import os
+from typing import Any
 
 AUTHOR = "SketchTurnerDev"  # recorded in SigMF metadata as core:author
 VERSION = "1.2.0"
 LICENSE = "GPL-3.0-or-later"
 LICENSE_SHORT = "GNU GPLv3"
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if os.path.exists(os.path.join(_REPO_DIR, "pyproject.toml")):
+    BASE_DIR = _REPO_DIR
+else:
+    BASE_DIR = os.path.join(os.path.expanduser("~"), ".pluto_siege")
+
 CONFIG_FILE = os.path.join(BASE_DIR, "settings.json")
 RECORDS_DIR = os.path.join(BASE_DIR, "recordings")
 
@@ -127,3 +133,10 @@ LOGO_LINES = [
     r"                                     /____/        ",
     f" {AUTHOR} v{VERSION} ({LICENSE_SHORT})",
 ]
+
+
+def brief(text: Any, limit: int = 18) -> str:
+    """Shorten one variable fragment so the line it lands in still fits error displays."""
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "~"
+

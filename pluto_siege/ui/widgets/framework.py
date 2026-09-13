@@ -74,12 +74,15 @@ def cp(pair: int) -> int:
     return curses.A_REVERSE if pair == C_ACCENT else 0
 
 
-def hide_cursor(visible: bool) -> None:
+def set_cursor_visible(visible: bool) -> None:
     """Show or hide the caret. Terminals may refuse, which is not an error."""
     try:
         curses.curs_set(1 if visible else 0)
     except curses.error:
         pass
+
+
+hide_cursor = set_cursor_visible
 
 
 def flush_input(win: Optional["curses.window"] = None) -> None:
@@ -365,7 +368,7 @@ def edit_text(win: "curses.window", prompt: str, initial: str,
     pos = len(buf)
     flush_input(win)
     win.nodelay(False)
-    hide_cursor(True)
+    set_cursor_visible(True)
     try:
         while True:
             h, w = win.getmaxyx()
@@ -423,7 +426,7 @@ def edit_text(win: "curses.window", prompt: str, initial: str,
                 buf.insert(pos, chr(k))
                 pos += 1
     finally:
-        hide_cursor(False)
+        set_cursor_visible(False)
 
 
 def edit_number(win: "curses.window", prompt: str, initial: Any, cast_type: type,

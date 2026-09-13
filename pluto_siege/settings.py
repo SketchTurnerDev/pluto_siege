@@ -24,6 +24,7 @@ from pluto_siege.config import (
     save_settings as _save_config,
     validate_config,
 )
+from pluto_siege.constants import brief
 
 DEFAULT_SETTINGS = AppConfig().to_dict()
 CONFIG = load_settings()
@@ -41,12 +42,6 @@ def validate_settings(s: Any) -> dict:
     else:
         raw = {}
     return validate_config(raw).to_dict()
-
-
-def brief(text: Any, limit: int = 18) -> str:
-    """Shorten one variable fragment so the line it lands in still fits the screen."""
-    flat = " ".join(str(text).split())
-    return flat if len(flat) <= limit else flat[: limit - 1] + "~"
 
 
 def freq_bounds(cfg: Optional[AppConfig] = None) -> tuple[int, int]:

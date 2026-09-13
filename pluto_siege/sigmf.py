@@ -29,17 +29,14 @@ from pluto_siege.constants import (
     RX_FULL_SCALE,
     SAMPLE_RATE_RANGE,
     VERSION,
+    brief,
 )
 
 # numpy is imported lazily via the callers; keep the module importable without it.
 import numpy as np
 from numpy.typing import NDArray
 
-
-def _brief(text: Any, limit: int = 18) -> str:
-    """Shorten one variable fragment so the line it lands in still fits error displays."""
-    flat = " ".join(str(text).split())
-    return flat if len(flat) <= limit else flat[: limit - 1] + "~"
+_brief = brief
 
 
 def to_sigmf_utc(dt: datetime.datetime) -> str:

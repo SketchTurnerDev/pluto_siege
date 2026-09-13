@@ -158,6 +158,7 @@ def screen_settings(win: "curses.window", config: Optional[AppConfig] = None) ->
             return -1
         _, w = win.getmaxyx()
         avail, _ = _content_rows(win, start)
+        val_col = 32
         top = max(0, idx - avail + 1)
         for i in range(top, min(len(rows), top + avail)):
             row = start + (i - top)

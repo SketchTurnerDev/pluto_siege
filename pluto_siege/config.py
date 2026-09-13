@@ -137,6 +137,7 @@ def save_settings(config: AppConfig) -> bool:
     """Write configuration to CONFIG_FILE atomically."""
     tmp_path = CONFIG_FILE + ".tmp"
     try:
+        os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(config.to_dict(), f, indent=2)
         os.replace(tmp_path, CONFIG_FILE)

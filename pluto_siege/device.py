@@ -61,7 +61,7 @@ class SDRDevice(Protocol):
     def tx_destroy_buffer(self) -> None: ...
 
 
-class suppress_c_stderr:
+class SuppressCStderr:
     """Redirect low-level C stderr (fd 2) to devnull to prevent C libiio logs from corrupting curses TUI."""
 
     def __enter__(self) -> None:
@@ -104,6 +104,9 @@ class suppress_c_stderr:
                     os.close(self._null)
                 except Exception:
                     pass
+
+
+suppress_c_stderr = SuppressCStderr
 
 
 def cleanup_sdr(sdr: SDRDevice) -> None:
