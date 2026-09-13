@@ -47,15 +47,17 @@ from pluto_siege.ui.widgets.framework import (
     scroll_view,
 )
 
-DELETE_KEYS = (curses.KEY_DC, curses.KEY_BACKSPACE, 8, 127, ord('d'), ord('D'))
+DELETE_KEYS = (curses.KEY_DC, curses.KEY_BACKSPACE, 8, 127, ord("d"), ord("D"))
 
 
-def _label_for_recording(f: str) -> str:
+def _label_for_recording(f: str, bounds: Optional[tuple[int, int]] = None) -> str:
     """Human-readable label from a recording filename with freq, sample rate, and sample count."""
     name = os.path.basename(f).removeprefix("rec_").removesuffix(".sigmf-data")
     parts = name.split("_")
     try:
-        use_sr, use_freq, _ = load_sigmf_meta(f)
+        use_sr, use_freq, err = load_sigmf_meta(f, bounds=bounds)
+        if err is not None or use_sr is None or use_freq is None:
+            return name
         n_samples = os.path.getsize(f) // BYTES_PER_SAMPLE
         if len(parts) >= 3:
             dt = datetime.datetime.strptime("_".join(parts[:2]), "%Y%m%d_%H%M%S")
@@ -67,7 +69,7 @@ def _label_for_recording(f: str) -> str:
         return name
 
 
-def pick_recording(win: "curses.window") -> Optional[str]:
+def pick_recording(win: "curses.window", bounds: Optional[tuple[int, int]] = None) -> Optional[str]:
     try:
         os.makedirs(RECORDS_DIR, exist_ok=True)
     except OSError as e:
@@ -82,7 +84,7 @@ def pick_recording(win: "curses.window") -> Optional[str]:
             message_box(win, "Select Recording to Transmit (0 found)", [("No recordings found. Capture a key first.", C_WARN)])
             return None
 
-        labels = [_label_for_recording(f) for f in files]
+        labels = [_label_for_recording(f, bounds=bounds) for f in files]
         sel, key = menu_select(
             win,
             f"Select Recording to Transmit ({len(files)} found)",
@@ -125,6 +127,7 @@ def do_transmit(
 ) -> int:
     """Replay one recording, then show the result. Returns the key that closed it."""
     log: list[tuple[str, int]] = []
+    tx_ok = True
 
     def render(extra_hint: str = "Please wait...") -> None:
         start = draw_chrome(win, "Transmit Mode", extra_hint)
@@ -148,19 +151,24 @@ def do_transmit(
 
         log.append(("Signal replayed successfully!", C_OK))
     except Exception as e:
+        tx_ok = False
         log.append((f"TX failed: {e}", C_ERR))
 
     flush_input(win)
-    return scroll_view(win, "Transmit Complete", log,
-                       hint="Enter = replay ▎ Esc = back", exit_keys=(KEY_ESC,) + KEY_ENTER)
+    title = "Transmit Complete" if tx_ok else "Transmit Failed"
+    hint = "Enter = replay ▎ Esc = back" if tx_ok else "Enter = retry ▎ Esc = back"
+    return scroll_view(win, title, log,
+                       hint=hint, exit_keys=(KEY_ESC,) + KEY_ENTER)
 
 
 def screen_transmit(
     win: "curses.window", sdr: SDRDevice, config: Optional[AppConfig] = None
 ) -> None:
-    path = pick_recording(win)
-    if path is None:
-        return
+    bounds = config.freq_bounds if config is not None else None
     while True:
-        if do_transmit(win, sdr, path, config=config) == KEY_ESC:
+        path = pick_recording(win, bounds=bounds)
+        if path is None:
             return
+        while True:
+            if do_transmit(win, sdr, path, config=config) == KEY_ESC:
+                break

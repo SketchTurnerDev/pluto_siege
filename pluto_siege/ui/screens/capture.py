@@ -38,7 +38,6 @@ from pluto_siege.ui.widgets.framework import (
     KEY_ESC,
     METER_REFRESH_SECONDS,
     _tail,
-    curses,
     draw_chrome,
     draw_signal_meter,
     flush_input,
@@ -90,21 +89,32 @@ def screen_capture(
         win.nodelay(True)
         last_draw = [0.0]
 
+        start, shown = render_log("Esc = abort")
+        meter_row = start + shown + 1
+        win.refresh()
+
         def check_abort() -> bool:
-            return win.getch() == KEY_ESC
+            nonlocal start, shown, meter_row
+            k = win.getch()
+            if k == curses.KEY_RESIZE:
+                start, shown = render_log("Esc = abort")
+                meter_row = start + shown + 1
+                win.refresh()
+            return k == KEY_ESC
 
         def on_trigger_detected() -> None:
+            nonlocal start, shown, meter_row
             log.append(("Key detected! Capturing...", C_DIM))
-            render_log("Esc = abort")
+            start, shown = render_log("Esc = abort")
+            meter_row = start + shown + 1
             win.refresh()
 
         def on_meter_update(lvl: float, saturated: bool) -> None:
             now = time.monotonic()
             if now - last_draw[0] > METER_REFRESH_SECONDS:
-                start, shown = render_log("Esc = abort")
                 draw_signal_meter(
                     win,
-                    start + shown + 1,
+                    meter_row,
                     lvl,
                     engine.trigger_threshold,
                     saturated,
@@ -119,8 +129,6 @@ def screen_capture(
         )
 
         flush_input(win)
-        win.nodelay(False)
-        cleanup_sdr(sdr)
 
         if engine.is_aborted:
             log.append(("Capture aborted.", C_WARN))
@@ -149,10 +157,11 @@ def screen_capture(
         finish("Capture Complete")
 
     except Exception as e:
+        log.append((f"Capture failed: {e}", C_ERR))
+        finish("Capture Failed")
+    finally:
         try:
             win.nodelay(False)
         except Exception:
             pass
         cleanup_sdr(sdr)
-        log.append((f"Capture failed: {e}", C_ERR))
-        finish("Capture Failed")

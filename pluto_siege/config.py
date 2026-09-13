@@ -20,7 +20,7 @@ from dataclasses import asdict, dataclass
 import json
 import math
 import os
-from typing import Any, Dict, Tuple
+from typing import Any
 
 from pluto_siege.constants import (
     AUTO_MARGIN_RANGE,
@@ -57,16 +57,17 @@ class AppConfig:
     max_post_trigger_seconds: float = 4.0
     permit_out_of_spec_frequency: bool = False
 
-    def update(self, new_values: Dict[str, Any]) -> None:
+    def update(self, new_values: dict[str, Any]) -> None:
+        fields = getattr(self, "__dataclass_fields__", None)
         for k, v in new_values.items():
-            if hasattr(self, k):
+            if fields is not None and k in fields:
                 setattr(self, k, v)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @property
-    def freq_bounds(self) -> Tuple[int, int]:
+    def freq_bounds(self) -> tuple[int, int]:
         return (
             FREQ_RANGE_EXTENDED
             if self.permit_out_of_spec_frequency
@@ -74,21 +75,21 @@ class AppConfig:
         )
 
 
-def validate_config(s: Dict[str, Any]) -> AppConfig:
+def validate_config(s: dict[str, Any]) -> AppConfig:
     """Validate raw configuration dictionary and return an AppConfig instance."""
     cfg = AppConfig()
     if not isinstance(s, dict):
         return cfg
 
-    if isinstance(s.get("pluto_uri"), str) and s["pluto_uri"]:
-        cfg.pluto_uri = s["pluto_uri"]
+    if isinstance(s.get("pluto_uri"), str) and s["pluto_uri"].strip():
+        cfg.pluto_uri = s["pluto_uri"].strip()
 
     if isinstance(s.get("permit_out_of_spec_frequency"), bool):
         cfg.permit_out_of_spec_frequency = s["permit_out_of_spec_frequency"]
 
     freq_range = cfg.freq_bounds
 
-    def check_num(key: str, limits: Tuple[float, float], cast_type: type) -> None:
+    def check_num(key: str, limits: tuple[float, float], cast_type: type) -> None:
         val = s.get(key)
         if isinstance(val, bool) or not isinstance(val, (int, float)):
             return

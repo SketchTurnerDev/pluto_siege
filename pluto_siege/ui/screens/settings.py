@@ -20,7 +20,7 @@ import curses
 import time
 from typing import Any, Optional
 
-from pluto_siege.config import AppConfig
+from pluto_siege.config import AppConfig, validate_config
 
 from pluto_siege.constants import (
     AUTO_MARGIN_RANGE,
@@ -38,7 +38,6 @@ from pluto_siege.settings import (
     CONFIG,
     freq_bounds,
     save_settings,
-    validate_settings,
 )
 from pluto_siege.ui.widgets.framework import (
     C_ACCENT,
@@ -114,25 +113,31 @@ def _apply_setting(
     row: dict[str, Any], win: "curses.window", cfg: AppConfig, redraw_fn: Any = None
 ) -> None:
     key, kind = row["key"], row["kind"]
+    label = row["label"]
     cur_val = getattr(cfg, key)
     if kind == "text":
-        new = edit_text(win, f"{row['label']}  (e.g. ip:192.168.2.1 or usb:)", str(cur_val), redraw_fn=redraw_fn)
+        new = edit_text(win, f"{label}  (e.g. ip:192.168.2.1 or usb:)", str(cur_val), redraw_fn=redraw_fn)
         if new is not None and new.strip():
             setattr(cfg, key, new.strip())
     elif kind == "bool":
         cur_str = "yes" if cur_val else "no"
-        new = edit_text(win, f"{row['label']}  (yes / no)", cur_str, redraw_fn=redraw_fn)
-        if new is not None:
+        while True:
+            new = edit_text(win, f"{label}  (yes / no)", cur_str, redraw_fn=redraw_fn)
+            if new is None:
+                break
             val = new.strip().lower()
-            if val == "yes":
+            if val in ("yes", "y", "true", "1"):
                 setattr(cfg, key, True)
-            elif val == "no":
+                break
+            elif val in ("no", "n", "false", "0"):
                 setattr(cfg, key, False)
+                break
             else:
-                _flash(win, "Invalid value. Type 'yes' or 'no'.", C_ERR)
+                _flash(win, "Invalid value. Type \"yes\" or \"no\".", C_ERR)
+                cur_str = new.strip()
     else:
         cast = int if kind == "int" else float
-        new = edit_number(win, row["label"], cur_val, cast, *row["range"], redraw_fn=redraw_fn)
+        new = edit_number(win, label, cur_val, cast, *row["range"], redraw_fn=redraw_fn)
         if new is not None:
             setattr(cfg, key, cast(new))
 
@@ -140,13 +145,11 @@ def _apply_setting(
 def screen_settings(win: "curses.window", config: Optional[AppConfig] = None) -> None:
     cfg = CONFIG if config is None else config
     idx = 0
-    label_w = 34
-    flush_input(win)
     win.nodelay(False)
     backup = dict(cfg.to_dict())
 
-    def render_settings_list() -> int:
-        rows = _build_setting_rows(cfg)
+    def render_settings_list(current_rows: Optional[list[dict[str, Any]]] = None) -> int:
+        rows = _build_setting_rows(cfg) if current_rows is None else current_rows
         start = draw_chrome(
             win, "Settings",
             "Up/Down = move ▎ Enter = edit ▎ S = save ▎ R = reset (no save) ▎ Esc = back (no save)",
@@ -157,19 +160,19 @@ def screen_settings(win: "curses.window", config: Optional[AppConfig] = None) ->
         avail, _ = _content_rows(win, start)
         top = max(0, idx - avail + 1)
         for i in range(top, min(len(rows), top + avail)):
-            row_y = start + (i - top)
-            label = rows[i]["label"].ljust(label_w)
-            value = rows[i]["val"]()
-            if i == idx:
-                _put(win, row_y, 4, f" > {label} : {value}".ljust(max(0, w - 8)),
-                     cp(C_ACCENT))
-            else:
-                _put(win, row_y, 4, f"   {label} : ", cp(C_DIM))
-                _put(win, row_y, 4 + 3 + label_w + 3, value, cp(C_OK))
+            row = start + (i - top)
+            r = rows[i]
+            prefix = " > " if i == idx else "   "
+            val = r["val"]()
+            val_str = f" {val} " if i == idx else val
+            lbl = r["label"]
+            line_str = f"{prefix}{lbl}".ljust(val_col) + val_str
+            pair = cp(C_ACCENT) if i == idx else cp(C_DIM)
+            _put(win, row, 2, line_str.ljust(max(0, w - 4)), pair)
         return start
 
     def handle_common_key(k: int) -> bool:
-        if k in (ord('s'), ord('S')):
+        if k in (ord("s"), ord("S")):
             if save_settings(cfg):
                 backup.clear()
                 backup.update(cfg.to_dict())
@@ -177,7 +180,7 @@ def screen_settings(win: "curses.window", config: Optional[AppConfig] = None) ->
             else:
                 _flash(win, "Could not write settings file!", C_ERR)
             return True
-        elif k in (ord('r'), ord('R')):
+        elif k in (ord("r"), ord("R")):
             cfg.update(DEFAULT_SETTINGS)
             _flash(win, "Defaults restored.", C_OK)
             return True
@@ -185,12 +188,16 @@ def screen_settings(win: "curses.window", config: Optional[AppConfig] = None) ->
 
     while True:
         rows = _build_setting_rows(cfg)
-        start = render_settings_list()
+        start = render_settings_list(rows)
         if start == -1:
             win.refresh()
-            time.sleep(0.1)
+            k = win.getch()
+            if k == KEY_ESC:
+                cfg.update(backup)
+                return
             continue
 
+        avail, _ = _content_rows(win, start)
         win.refresh()
         k = win.getch()
         if handle_common_key(k):
@@ -200,12 +207,13 @@ def screen_settings(win: "curses.window", config: Optional[AppConfig] = None) ->
             _apply_setting(rows[idx], win, cfg, redraw_fn=render_settings_list)
             flush_input(win)
             before = dict(cfg.to_dict())
-            cfg.update(validate_settings(cfg.to_dict()))
-            reset = [key for key, val in cfg.to_dict().items() if before[key] != val]
+            validated = validate_config(before).to_dict()
+            cfg.update(validated)
+            reset = [key for key, val in validated.items() if before[key] != val]
             if reset:
                 _flash(win, "Out of range, reset to default: " + ", ".join(reset), C_WARN)
         elif k == KEY_ESC:
             cfg.update(backup)
             return
         else:
-            idx = _move_cursor(idx, k, len(rows))
+            idx = _move_cursor(idx, k, len(rows), avail)

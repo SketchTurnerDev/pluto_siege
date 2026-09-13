@@ -20,20 +20,26 @@ import datetime
 import json
 import math
 import os
-from typing import Optional
+from typing import Any, Optional
 
 from pluto_siege.constants import (
     AUTHOR,
     BYTES_PER_SAMPLE,
+    FREQ_RANGE_IN_SPEC,
     RX_FULL_SCALE,
     SAMPLE_RATE_RANGE,
     VERSION,
 )
-from pluto_siege.settings import brief, freq_bounds
 
 # numpy is imported lazily via the callers; keep the module importable without it.
 import numpy as np
 from numpy.typing import NDArray
+
+
+def _brief(text: Any, limit: int = 18) -> str:
+    """Shorten one variable fragment so the line it lands in still fits error displays."""
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "~"
 
 
 def to_sigmf_utc(dt: datetime.datetime) -> str:
@@ -54,8 +60,10 @@ def save_sigmf_pair(base_path: str, array: NDArray[np.complex64], freq: int, sr:
     meta_path = base_path + ".sigmf-meta"
     promoted = False
     try:
-        norm_data = (array / RX_FULL_SCALE).astype("<c8")
+        norm_data = (array * np.float32(1.0 / RX_FULL_SCALE)).astype("<c8")
         norm_data.tofile(tmp_data_path)
+        if os.path.getsize(tmp_data_path) != norm_data.nbytes:
+            raise OSError("Incomplete data write (disk full?)")
         meta = {
             "global": {
                 "core:datatype": "cf32_le",
@@ -116,7 +124,8 @@ def load_sigmf_meta(
     except UnicodeDecodeError:
         return None, None, "metadata is not valid UTF-8"
     except OSError as e:
-        return None, None, f"metadata unreadable ({brief(e.strerror or 'I/O error')})"
+        err_detail = e.strerror or "I/O error"
+        return None, None, f"metadata unreadable ({_brief(err_detail)})"
     try:
         if not isinstance(meta, dict):
             return None, None, "metadata is not a SigMF object"
@@ -127,7 +136,7 @@ def load_sigmf_meta(
         if dtype is None:
             return None, None, "metadata has no sample format"
         if dtype != "cf32_le":
-            return None, None, f"sample format is {brief(dtype, 12)!r}, not cf32_le"
+            return None, None, f"sample format is {_brief(dtype, 12)!r}, not cf32_le"
         captures = meta.get("captures")
         first = captures[0] if isinstance(captures, list) and captures else None
         if not isinstance(first, dict):
@@ -140,13 +149,14 @@ def load_sigmf_meta(
             return None, None, "metadata rate or frequency is not finite"
         sr, freq = int(sr), int(freq)
     except (AttributeError, KeyError, IndexError, TypeError, ValueError) as e:
-        return None, None, f"metadata is malformed ({brief(e)})"
+        return None, None, f"metadata is malformed ({_brief(e)})"
     srlo, srhi = SAMPLE_RATE_RANGE
     if not srlo <= sr <= srhi:
-        return None, None, (f"rate {brief(sr, 9)} Hz outside "
+        return None, None, (f"rate {_brief(sr, 9)} Hz outside "
                             f"{srlo / 1e3:g}k-{srhi / 1e6:g}M Hz")
-    lo, hi = bounds if bounds is not None else freq_bounds()
+    lo, hi = bounds if bounds is not None else FREQ_RANGE_IN_SPEC
     if not lo <= freq <= hi:
-        return None, None, (f"{brief(f'{freq / 1e6:.3f}', 11)} MHz outside "
+        freq_str = f"{freq / 1e6:.3f}"
+        return None, None, (f"{_brief(freq_str, 11)} MHz outside "
                             f"{lo / 1e6:g}-{hi / 1e6:g} MHz")
     return sr, freq, None

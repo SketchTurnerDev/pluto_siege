@@ -31,16 +31,21 @@ from pluto_siege.constants import (
 )
 
 
+INV_FULL_SCALE_SQ = 1.0 / (RX_FULL_SCALE * RX_FULL_SCALE)
+
+
 def subwindow_powers(
     data: NDArray[np.complex64], sub_size: int = DETECT_SUB_WINDOW
 ) -> NDArray[np.float64]:
     """Mean power of each consecutive sub-window, normalised to full scale (linear)."""
+    if data.ndim > 1:
+        data = data.ravel()
     if data.dtype != np.complex64 or not data.flags["C_CONTIGUOUS"]:
         data = np.ascontiguousarray(data, dtype=np.complex64)
     n = data.size
     if n == 0:
         return np.zeros(1, dtype=np.float64)
-    inv = 1.0 / (RX_FULL_SCALE * RX_FULL_SCALE)
+    inv = INV_FULL_SCALE_SQ
     if n < sub_size:
         flat = data.view(np.float32)
         total = float(np.einsum("i,i->", flat, flat, dtype=np.float64))
@@ -53,7 +58,7 @@ def subwindow_powers(
 
 def power_to_dbfs(power: float) -> float:
     """Linear full-scale-normalised power to dBFS, finite even at zero power."""
-    return float(10.0 * math.log10(power + DB_EPSILON))
+    return float(10.0 * math.log10(max(0.0, power) + DB_EPSILON))
 
 
 def dbfs_to_power(dbfs: float) -> float:
@@ -72,6 +77,8 @@ def noise_floor_dbfs(
     powers: NDArray[np.float64], percentile: float = NF_PERCENTILE
 ) -> float:
     """Noise floor from pooled sub-window powers."""
+    if len(powers) == 0:
+        return -120.0
     return power_to_dbfs(float(np.percentile(powers, percentile)))
 
 
@@ -94,10 +101,12 @@ def calculate_snr_db(
     tone_bins: int = LOOPBACK_TONE_BINS,
 ) -> float:
     """Calculate Signal-to-Noise Ratio (SNR) in dB from Hanning-windowed FFT spectrum."""
-    rx_norm = rx / RX_FULL_SCALE
-    spectrum = np.abs(np.fft.fftshift(
-        np.fft.fft(rx_norm * np.hanning(len(rx_norm))))) ** 2
-    freqs = np.fft.fftshift(np.fft.fftfreq(len(rx_norm), 1 / fs))
+    n_samples = len(rx)
+    if n_samples < 32 or fs <= 0:
+        return -120.0
+    windowed_fft = np.fft.fftshift(np.fft.fft(rx * np.hanning(n_samples)))
+    spectrum = windowed_fft.real ** 2 + windowed_fft.imag ** 2
+    freqs = np.fft.fftshift(np.fft.fftfreq(n_samples, 1 / fs))
 
     target_idx = int(np.argmin(np.abs(freqs - tone_freq)))
     left = max(0, target_idx - tone_bins)
@@ -106,7 +115,10 @@ def calculate_snr_db(
     in_band = float(np.sum(spectrum[left:right]))
     mask = np.ones_like(spectrum, dtype=bool)
     mask[left:right] = False
-    noise = float(np.mean(spectrum[mask])) * (right - left)
+    noise_bins = spectrum[mask]
+    if noise_bins.size == 0:
+        return 0.0
+    noise = float(np.mean(noise_bins)) * (right - left)
 
     signal_power = max(in_band - noise, 1e-20)
     return float(10.0 * np.log10(signal_power / max(noise, 1e-20)))

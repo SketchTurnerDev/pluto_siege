@@ -35,12 +35,12 @@ C_OK = 3
 C_WARN = 4
 C_ERR = 5
 C_DIM = 6
-C_BAR = 7
+C_BAR = C_OK
 
 FLASH_SECONDS = 0.9
 METER_REFRESH_SECONDS = 0.1
 METER_FLOOR_DBFS = -80.0
-KEY_ENTER = (10, 13)
+KEY_ENTER = (10, 13, curses.KEY_ENTER)
 KEY_ESC = 27
 ESC_DELAY_MS = 25
 
@@ -48,7 +48,10 @@ ESC_DELAY_MS = 25
 def init_colors() -> None:
     if not curses.has_colors():
         return
-    curses.start_color()
+    try:
+        curses.start_color()
+    except curses.error:
+        pass
     try:
         curses.use_default_colors()
         bg = -1
@@ -61,13 +64,14 @@ def init_colors() -> None:
         curses.init_pair(C_WARN, curses.COLOR_YELLOW, bg)
         curses.init_pair(C_ERR, curses.COLOR_RED, bg)
         curses.init_pair(C_DIM, curses.COLOR_WHITE, bg)
-        curses.init_pair(C_BAR, curses.COLOR_GREEN, bg)
     except curses.error:
         pass
 
 
 def cp(pair: int) -> int:
-    return curses.color_pair(pair) if curses.has_colors() else 0
+    if curses.has_colors():
+        return curses.color_pair(pair)
+    return curses.A_REVERSE if pair == C_ACCENT else 0
 
 
 def hide_cursor(visible: bool) -> None:
@@ -134,9 +138,15 @@ MIN_WIN_WIDTH = 90
 
 
 def update_term_size() -> None:
-    """Synchronize curses screen buffer size with actual terminal dimensions on Windows."""
+    """Synchronize curses screen buffer size with actual terminal dimensions."""
     try:
-        curses.resize_term(0, 0)
+        if hasattr(curses, "update_lines_cols"):
+            curses.update_lines_cols()
+        else:
+            import shutil
+            cols, lines = shutil.get_terminal_size()
+            if hasattr(curses, "resizeterm"):
+                curses.resizeterm(lines, cols)
     except Exception:
         pass
 
@@ -173,12 +183,12 @@ def draw_signal_meter(win: "curses.window", row: int, lvl: float,
     """Render signal level progress bar widget with dBFS readout and saturation indicator."""
     _, w = win.getmaxyx()
     meter_w = max(1, min(40, w - 30))
-    bars = int(
-        np.clip(
-            (lvl - METER_FLOOR_DBFS) / -METER_FLOOR_DBFS * meter_w,
-            0,
+    bars = max(
+        0,
+        min(
             meter_w,
-        )
+            int((lvl - METER_FLOOR_DBFS) / -METER_FLOOR_DBFS * meter_w),
+        ),
     )
     _put(win, row, 2, "Signal:", cp(C_DIM))
     _put(win, row, 10, "[", cp(C_DIM))
@@ -201,11 +211,21 @@ def draw_signal_meter(win: "curses.window", row: int, lvl: float,
             "SAT!",
             cp(C_ERR),
         )
+    else:
+        _put(
+            win,
+            row,
+            12 + meter_w + len(info) + 1,
+            "    ",
+            0,
+        )
 
 
 def _content_rows(win: "curses.window", start: int,
                   reserved: int = 2) -> tuple[int, bool]:
     """Rows free for content, and whether the reserved rows below really exist."""
+    if start < 0:
+        return (0, False)
     h, _ = win.getmaxyx()
     room = h - start - reserved
     return (room, True) if room >= 1 else (1, False)
@@ -256,7 +276,9 @@ def scroll_view(win: "curses.window", subtitle: str, lines: list[tuple[str, int]
         start = draw_chrome(win, subtitle, hint)
         if start == -1:
             win.refresh()
-            time.sleep(0.1)
+            k = win.getch()
+            if k in exit_keys:
+                return k
             continue
         avail, _ = _content_rows(win, start)
         max_top = max(0, len(lines) - avail)
@@ -298,7 +320,9 @@ def menu_select(win: "curses.window", subtitle: str, items: list[str],
         start = draw_chrome(win, subtitle, hint)
         if start == -1:
             win.refresh()
-            time.sleep(0.1)
+            k = win.getch()
+            if k == KEY_ESC:
+                return (None, KEY_ESC) if action_keys else None
             continue
         _, w = win.getmaxyx()
         avail, _ = _content_rows(win, start)
@@ -330,8 +354,8 @@ def confirm_dialog(win: "curses.window", subtitle: str, question: str) -> bool:
         ("Are you sure you want to proceed?", C_DIM),
     ]
     res = scroll_view(win, subtitle, lines, hint="Enter/Y = Yes ▎ Esc/N = No",
-                      exit_keys=(KEY_ESC,) + KEY_ENTER + (ord('y'), ord('Y'), ord('n'), ord('N')))
-    return res in KEY_ENTER or res in (ord('y'), ord('Y'))
+                      exit_keys=(KEY_ESC,) + KEY_ENTER + (ord("y"), ord("Y"), ord("n"), ord("N")))
+    return res in KEY_ENTER or res in (ord("y"), ord("Y"))
 
 
 def edit_text(win: "curses.window", prompt: str, initial: str,
@@ -352,7 +376,9 @@ def edit_text(win: "curses.window", prompt: str, initial: str,
                 _put(win, max(0, h // 2 - 1), max(0, (w - len(msg)) // 2), msg, cp(C_WARN))
                 _put(win, max(0, h // 2), max(0, (w - len(sub)) // 2), sub, cp(C_DIM))
                 win.refresh()
-                time.sleep(0.1)
+                k = win.getch()
+                if k == KEY_ESC:
+                    return None
                 continue
 
             if redraw_fn:

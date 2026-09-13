@@ -80,12 +80,14 @@ if sys.platform == "win32":
         import ctypes
 
         _HandlerRoutine = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_ulong)
+        _CTRL_C_EVENT = 0
+        _CTRL_BREAK_EVENT = 1
         _CTRL_CLOSE_EVENT = 2
         _CTRL_LOGOFF_EVENT = 5
         _CTRL_SHUTDOWN_EVENT = 6
 
         def _win_ctrl_handler(dw_ctrl_type: int) -> bool:
-            if dw_ctrl_type in (_CTRL_CLOSE_EVENT, _CTRL_LOGOFF_EVENT, _CTRL_SHUTDOWN_EVENT):
+            if dw_ctrl_type in (_CTRL_C_EVENT, _CTRL_BREAK_EVENT, _CTRL_CLOSE_EVENT, _CTRL_LOGOFF_EVENT, _CTRL_SHUTDOWN_EVENT):
                 _cleanup_active_sdr()
                 return True
             return False
@@ -103,18 +105,25 @@ def reconnect_sdr(win: "curses.window", sdr: Optional[SDRDevice], hw_model: str,
     start_y = draw_chrome(win, "Reconnecting", "Please wait...")
     _put(win, start_y, 2, f"Connecting to PlutoSDR at {uri} ...", cp(C_DIM))
     win.refresh()
+    release_sdr(sdr)
+    _set_active_sdr(None)
     try:
         new_sdr, model = open_sdr(uri, hw_model)
     except Exception as e:
         CONFIG.pluto_uri = previous_uri
         save_settings()
+        prev_sdr = None
+        try:
+            prev_sdr, _ = open_sdr(previous_uri, hw_model)
+            _set_active_sdr(prev_sdr)
+        except Exception:
+            pass
         message_box(win, "Reconnect Failed", [
             (f"Could not open {uri}: {e}", C_ERR),
-            (f"Still connected to {previous_uri}.", C_WARN),
+            (f"Reverted to {previous_uri}.", C_WARN),
         ])
-        return sdr, hw_model
+        return prev_sdr, hw_model
     _set_active_sdr(new_sdr)
-    release_sdr(sdr)
     message_box(win, "Reconnected", [(f"Connected: {model} at {uri}", C_OK)])
     return new_sdr, model
 
@@ -146,7 +155,9 @@ def connect_screen(win: "curses.window") -> tuple[Optional[SDRDevice], str]:
         start_y = draw_chrome(win, "Startup", hint)
         if start_y == -1:
             win.refresh()
-            time.sleep(0.1)
+            k = win.getch()
+            if k == KEY_ESC:
+                return None, hw_model
             continue
         err_lines = [line.strip() for line in err_msg.splitlines() if line.strip()]
         curr_y = start_y
@@ -173,7 +184,7 @@ def connect_screen(win: "curses.window") -> tuple[Optional[SDRDevice], str]:
         elif k in KEY_ENTER:
             screen_settings(win)
             attempt = CONFIG.pluto_uri != uri
-        elif k in (ord('r'), ord('R')):
+        elif k in (ord("r"), ord("R")):
             attempt = True
 
 

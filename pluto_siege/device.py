@@ -16,9 +16,10 @@
 
 """PlutoSDR device access: open, configure, cleanup, and SDRDevice protocol."""
 
-from typing import Any, Optional, Protocol, Tuple, runtime_checkable
+from typing import Any, Optional, Protocol, runtime_checkable
 
 import os
+import sys
 import numpy as np
 from numpy.typing import NDArray
 
@@ -67,10 +68,14 @@ class suppress_c_stderr:
         self._null = -1
         self._stderr = -1
         try:
+            sys.stderr.flush()
+        except Exception:
+            pass
+        try:
             self._null = os.open(os.devnull, os.O_WRONLY)
             self._stderr = os.dup(2)
             os.dup2(self._null, 2)
-        except Exception:
+        except BaseException:
             if self._null != -1:
                 try:
                     os.close(self._null)
@@ -138,8 +143,7 @@ def set_io_timeout(sdr: SDRDevice, expected_seconds: float) -> bool:
 
 def safe_rx(sdr: SDRDevice) -> NDArray[np.complex64]:
     """Receive one buffer as contiguous complex64. Raises if the link is dead."""
-    with suppress_c_stderr():
-        data = sdr.rx()
+    data = sdr.rx()
     if data is None or len(data) == 0:
         raise IOError("SDR returned empty data (USB disconnected?)")
     return np.ascontiguousarray(data, dtype=np.complex64)
@@ -213,7 +217,7 @@ def cfg_loopback(sdr: SDRDevice, config: Optional[AppConfig] = None) -> bool:
         return set_io_timeout(sdr, buf_size / use_sr)
 
 
-def open_sdr(uri: str, fallback_model: str = "PlutoSDR") -> Tuple[SDRDevice, str]:
+def open_sdr(uri: str, fallback_model: str = "PlutoSDR") -> tuple[SDRDevice, str]:
     """Open a device and read its hardware model. Raises on failure."""
     if adi is None:
         raise ImportError(
@@ -234,9 +238,4 @@ def open_sdr(uri: str, fallback_model: str = "PlutoSDR") -> Tuple[SDRDevice, str
 def release_sdr(sdr: Optional[SDRDevice]) -> None:
     if sdr is None:
         return
-    with suppress_c_stderr():
-        cleanup_sdr(sdr)
-        try:
-            del sdr
-        except Exception:
-            pass
+    cleanup_sdr(sdr)
