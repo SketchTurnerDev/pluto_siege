@@ -1,6 +1,11 @@
 # Byte-compiled / cache files
 __pycache__/
 *.py[cod]
+.coverage
+.coverage.*
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Virtual environments
 .venv/

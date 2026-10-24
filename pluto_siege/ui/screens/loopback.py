@@ -16,18 +16,18 @@
 
 """Loopback test screen: digital loopback tone + SNR measurement."""
 
+from __future__ import annotations
+
 import curses
 
-from typing import Optional
-
-from pluto_siege.config import AppConfig
+from pluto_siege.config import CONFIG, AppConfig
 from pluto_siege.constants import (
     IO_TIMEOUT_UNAVAILABLE,
     LOOPBACK_MIN_SNR_DB,
 )
 from pluto_siege.device import SDRDevice
 from pluto_siege.engine import LoopbackTester
-from pluto_siege.settings import CONFIG
+from pluto_siege.sound import SoundCue, play_cue
 from pluto_siege.ui.widgets.framework import (
     C_DIM,
     C_ERR,
@@ -38,40 +38,53 @@ from pluto_siege.ui.widgets.framework import (
     _tail,
     draw_chrome,
     flush_input,
+    screen_is_usable,
     scroll_view,
+    wait_for_usable_screen,
 )
 
 
 def screen_loopback(
-    win: "curses.window", sdr: SDRDevice, config: Optional[AppConfig] = None
+    win: curses.window, sdr: SDRDevice, config: AppConfig | None = None
 ) -> None:
     """Send a tone through the chip's digital loopback and measure its SNR."""
     cfg = CONFIG if config is None else config
-    log: list[tuple[str, int]] = []
+    while True:
+        if not screen_is_usable(win) and not wait_for_usable_screen(win):
+            return
+        log: list[tuple[str, int]] = [("Running digital loopback test...", C_DIM)]
 
-    def render(hint: str = "Please wait...") -> None:
-        start = draw_chrome(win, "Loopback Test", hint)
-        _tail(log, win, start, 2)
-        win.refresh()
+        try:
+            play_cue(SoundCue.START, enabled=cfg.enable_sound)
+            start = draw_chrome(win, "Loopback Test", "Please wait...")
+            if start != -1:
+                _tail(log, win, start, 2)
+                win.refresh()
 
-    try:
-        log.append(("Running digital loopback test...", C_DIM))
-        render()
+            snr_db, tone_freq, timeout_ok = LoopbackTester.run_test(
+                sdr, cfg.sample_rate, cfg.rx_buffer_size, config=cfg
+            )
+            if not timeout_ok:
+                log.append((IO_TIMEOUT_UNAVAILABLE, C_WARN))
 
-        snr_db, tone_freq, timeout_ok = LoopbackTester.run_test(
-            sdr, cfg.sample_rate, cfg.rx_buffer_size, config=cfg
+            log.append((f"Test tone: {tone_freq / 1000:.3f} kHz", C_DIM))
+            if snr_db >= LOOPBACK_MIN_SNR_DB:
+                play_cue(SoundCue.PASS, enabled=cfg.enable_sound)
+                log.append((f"PASSED. SNR: {snr_db:.1f} dB", C_OK))
+            else:
+                play_cue(SoundCue.FAIL, enabled=cfg.enable_sound)
+                log.append((f"FAILED. SNR: {snr_db:.1f} dB", C_ERR))
+        except Exception as e:
+            play_cue(SoundCue.FAIL, enabled=cfg.enable_sound)
+            log.append((f"Loopback failed: {e}", C_ERR))
+
+        flush_input(win)
+        key = scroll_view(
+            win,
+            "Loopback Test",
+            log,
+            hint="Enter/R = retest ▎ Esc/Q = back",
+            exit_keys=(KEY_ESC, ord("q"), ord("Q"), ord("r"), ord("R")) + KEY_ENTER,
         )
-        if not timeout_ok:
-            log.append((IO_TIMEOUT_UNAVAILABLE, C_WARN))
-
-        log.append((f"Test tone: {tone_freq / 1000:.3f} kHz", C_DIM))
-        if snr_db >= LOOPBACK_MIN_SNR_DB:
-            log.append((f"PASSED. SNR: {snr_db:.1f} dB", C_OK))
-        else:
-            log.append((f"FAILED. SNR: {snr_db:.1f} dB", C_ERR))
-    except Exception as e:
-        log.append((f"Loopback failed: {e}", C_ERR))
-
-    flush_input(win)
-    scroll_view(win, "Loopback Test", log, hint="Enter/Esc = back",
-                exit_keys=(KEY_ESC,) + KEY_ENTER)
+        if key not in (ord("r"), ord("R")) and key not in KEY_ENTER:
+            return

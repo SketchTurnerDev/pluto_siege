@@ -14,27 +14,25 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Settings module re-exporting AppConfig instance for compatibility."""
+"""Settings re-exports from pluto_siege.config."""
 
-from typing import Any, Optional
+from __future__ import annotations
+
+from typing import Any
 
 from pluto_siege.config import (
+    CONFIG,
+    DEFAULT_SETTINGS,
     AppConfig,
+    freq_bounds,
     load_settings,
-    save_settings as _save_config,
+    save_settings,
     validate_config,
 )
-from pluto_siege.constants import brief
-
-DEFAULT_SETTINGS = AppConfig().to_dict()
-CONFIG = load_settings()
 
 
-def save_settings(cfg: Optional[AppConfig] = None) -> bool:
-    return _save_config(CONFIG if cfg is None else cfg)
-
-
-def validate_settings(s: Any) -> dict:
+def validate_settings(s: Any) -> dict[str, Any]:
+    """Validate a raw settings dict or AppConfig and return a clean dictionary."""
     if isinstance(s, AppConfig):
         raw = s.to_dict()
     elif isinstance(s, dict):
@@ -44,5 +42,13 @@ def validate_settings(s: Any) -> dict:
     return validate_config(raw).to_dict()
 
 
-def freq_bounds(cfg: Optional[AppConfig] = None) -> tuple[int, int]:
-    return (CONFIG if cfg is None else cfg).freq_bounds
+__all__ = [
+    "CONFIG",
+    "DEFAULT_SETTINGS",
+    "AppConfig",
+    "freq_bounds",
+    "load_settings",
+    "save_settings",
+    "validate_config",
+    "validate_settings",
+]

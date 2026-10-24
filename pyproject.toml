@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pluto_siege"
-version = "1.2.0"
+version = "2.0.0"
 description = "PlutoSDR ISM-band RF capture and replay tool (433 MHz, 868 MHz, etc.)."
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
@@ -14,8 +14,12 @@ authors = [
 requires-python = ">=3.9"
 dependencies = [
     "pyadi-iio>=0.0.16",
+    "pylibiio<1.0",
     "numpy>=1.20.0",
-    "windows-curses>=2.3.0; sys_platform == 'win32'",
+]
+classifiers = [
+    "Operating System :: POSIX :: Linux",
+    "Environment :: Console :: Curses",
 ]
 
 [project.scripts]
@@ -23,3 +27,29 @@ pluto_siege = "pluto_siege.ui.screens.main_menu:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["pluto_siege*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pluto_siege"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_configs = true
+check_untyped_defs = true
+no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = ["adi"]
+ignore_missing_imports = true

@@ -14,12 +14,15 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Configuration management using a strongly-typed dataclass."""
+"""Configuration management using a validated dataclass."""
 
-from dataclasses import asdict, dataclass
+from __future__ import annotations
+
 import json
 import math
 import os
+import tempfile
+from dataclasses import asdict, dataclass, fields
 from typing import Any
 
 from pluto_siege.constants import (
@@ -38,11 +41,19 @@ from pluto_siege.constants import (
 )
 
 
+def _ip_endpoint(uri: object) -> str | None:
+    """Extract the host/IP part from an 'ip:...' URI, or None if not an IP URI."""
+    if isinstance(uri, str) and uri.startswith("ip:"):
+        return uri[3:].strip()
+    return None
+
+
 @dataclass
 class AppConfig:
-    """Strongly-typed application configuration with validation and dict-like access."""
+    """Application configuration with range validation and atomic persistence."""
 
-    pluto_uri: str = "ip:192.168.2.1"
+    pluto_uri: str = "usb:"
+    pluto_ip: str = "192.168.2.1"
     rx_freq: int = 433_920_000
     tx_freq: int = 433_920_000
     sample_rate: int = 2_100_000
@@ -56,15 +67,51 @@ class AppConfig:
     silence_seconds: float = 0.8
     max_post_trigger_seconds: float = 4.0
     permit_out_of_spec_frequency: bool = False
+    enable_mouse: bool = True
+    enable_sound: bool = True
+    enable_gps: bool = False
+    gpsd_host: str = "127.0.0.1"
+    gpsd_port: int = 2947
+
+    def __post_init__(self) -> None:
+        endpoint = _ip_endpoint(self.pluto_uri)
+        if endpoint:
+            self.pluto_ip = endpoint
 
     def update(self, new_values: dict[str, Any]) -> None:
-        fields = getattr(self, "__dataclass_fields__", None)
-        for k, v in new_values.items():
-            if fields is not None and k in fields:
-                setattr(self, k, v)
+        """Validate and apply known configuration keys in place."""
+        if not isinstance(new_values, dict):
+            return
+        valid_keys = {f.name for f in fields(self)}
+        known = {k: v for k, v in new_values.items() if k in valid_keys}
+        if not known:
+            return
+
+        candidate = self.to_dict()
+        candidate.update(known)
+        if (
+            "pluto_ip" in known
+            and "pluto_uri" not in known
+            and self.pluto_uri.startswith("ip:")
+            and isinstance(known["pluto_ip"], str)
+            and known["pluto_ip"].strip()
+        ):
+            candidate["pluto_uri"] = f"ip:{known['pluto_ip'].strip()}"
+
+        validated = validate_config(candidate)
+        for f in fields(self):
+            setattr(self, f.name, getattr(validated, f.name))
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        values = asdict(self)
+        endpoint = _ip_endpoint(values["pluto_uri"])
+        if endpoint:
+            values["pluto_ip"] = endpoint
+        elif endpoint == "" and isinstance(values["pluto_ip"], str):
+            ip = values["pluto_ip"].strip()
+            if ip:
+                values["pluto_uri"] = f"ip:{ip}"
+        return values
 
     @property
     def freq_bounds(self) -> tuple[int, int]:
@@ -75,22 +122,48 @@ class AppConfig:
         )
 
 
-def validate_config(s: dict[str, Any]) -> AppConfig:
-    """Validate raw configuration dictionary and return an AppConfig instance."""
+def validate_config(raw: dict[str, Any]) -> AppConfig:
+    """Validate raw dictionary and return an AppConfig instance.
+
+    Invalid individual fields fall back to their defaults so a partially edited
+    settings file preserves all valid values.
+    """
     cfg = AppConfig()
-    if not isinstance(s, dict):
+    if not isinstance(raw, dict):
         return cfg
 
-    if isinstance(s.get("pluto_uri"), str) and s["pluto_uri"].strip():
-        cfg.pluto_uri = s["pluto_uri"].strip()
+    uri = raw.get("pluto_uri")
+    if isinstance(uri, str) and uri.strip():
+        cfg.pluto_uri = uri.strip()
 
-    if isinstance(s.get("permit_out_of_spec_frequency"), bool):
-        cfg.permit_out_of_spec_frequency = s["permit_out_of_spec_frequency"]
+    raw_ip = raw.get("pluto_ip")
+    saved_ip = raw_ip.strip() if isinstance(raw_ip, str) and raw_ip.strip() else None
+    endpoint = _ip_endpoint(cfg.pluto_uri)
+    if endpoint:
+        cfg.pluto_ip = endpoint
+    elif endpoint == "" and saved_ip:
+        cfg.pluto_ip = saved_ip
+        cfg.pluto_uri = f"ip:{saved_ip}"
+    elif saved_ip:
+        cfg.pluto_ip = saved_ip
 
-    freq_range = cfg.freq_bounds
+    for bool_key in (
+        "permit_out_of_spec_frequency",
+        "auto_threshold",
+        "enable_mouse",
+        "enable_sound",
+        "enable_gps",
+    ):
+        val = raw.get(bool_key)
+        if isinstance(val, bool):
+            setattr(cfg, bool_key, val)
+
+    host = raw.get("gpsd_host")
+    if isinstance(host, str) and host.strip():
+        cfg.gpsd_host = host.strip()
 
     def check_num(key: str, limits: tuple[float, float], cast_type: type) -> None:
-        val = s.get(key)
+        val = raw.get(key)
         if isinstance(val, bool) or not isinstance(val, (int, float)):
             return
         try:
@@ -105,6 +178,7 @@ def validate_config(s: dict[str, Any]) -> AppConfig:
         else:
             setattr(cfg, key, num)
 
+    freq_range = cfg.freq_bounds
     check_num("rx_freq", freq_range, int)
     check_num("tx_freq", freq_range, int)
     check_num("sample_rate", SAMPLE_RATE_RANGE, int)
@@ -116,35 +190,60 @@ def validate_config(s: dict[str, Any]) -> AppConfig:
     check_num("max_post_trigger_seconds", POST_TRIGGER_RANGE, float)
     check_num("manual_threshold", THRESHOLD_RANGE, float)
     check_num("auto_trigger_margin", AUTO_MARGIN_RANGE, float)
-
-    if isinstance(s.get("auto_threshold"), bool):
-        cfg.auto_threshold = s["auto_threshold"]
+    check_num("gpsd_port", (1, 65535), int)
 
     return cfg
 
 
 def load_settings() -> AppConfig:
+    """Load and validate settings from CONFIG_FILE, or return defaults."""
     if os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            with open(CONFIG_FILE, encoding="utf-8") as f:
                 return validate_config(json.load(f))
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        except (
+            json.JSONDecodeError,
+            OSError,
+            UnicodeDecodeError,
+            ValueError,
+            RecursionError,
+        ):
             pass
     return AppConfig()
 
 
-def save_settings(config: AppConfig) -> bool:
-    """Write configuration to CONFIG_FILE atomically."""
-    tmp_path = CONFIG_FILE + ".tmp"
+def save_settings(config: AppConfig | None = None) -> bool:
+    """Atomically write configuration to CONFIG_FILE."""
+    target = CONFIG if config is None else config
+    tmp_path: str | None = None
     try:
-        os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(config.to_dict(), f, indent=2)
+        payload = json.dumps(target.to_dict(), indent=2, allow_nan=False)
+        directory = os.path.dirname(os.path.abspath(CONFIG_FILE))
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=".settings-", suffix=".tmp", dir=directory
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp_path, CONFIG_FILE)
+        tmp_path = None
         return True
-    except (OSError, TypeError, ValueError):
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+    except (OSError, TypeError, ValueError, AttributeError):
         return False
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+def freq_bounds(cfg: AppConfig | None = None) -> tuple[int, int]:
+    """Return active frequency limits for the given or global configuration."""
+    return (CONFIG if cfg is None else cfg).freq_bounds
+
+
+DEFAULT_SETTINGS = AppConfig().to_dict()
+CONFIG = load_settings()

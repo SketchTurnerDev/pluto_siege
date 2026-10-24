@@ -18,15 +18,15 @@
 
 from pluto_siege.ui.screens.capture import screen_capture
 from pluto_siege.ui.screens.loopback import screen_loopback
-from pluto_siege.ui.screens.main_menu import main, curses_app
+from pluto_siege.ui.screens.main_menu import curses_app, main
 from pluto_siege.ui.screens.settings import screen_settings
 from pluto_siege.ui.screens.transmit import screen_transmit
 
 __all__ = [
+    "curses_app",
+    "main",
     "screen_capture",
     "screen_loopback",
-    "main",
-    "curses_app",
     "screen_settings",
     "screen_transmit",
 ]
