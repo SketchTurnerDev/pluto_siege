@@ -275,7 +275,7 @@ class CaptureEngine:
                     return
                 data = self._receive_buffer()
                 powers = subwindow_powers(data)
-                self.current_level_dbfs = power_to_dbfs(float(powers.max()))
+                self.current_level_dbfs = power_to_dbfs(float(np.max(powers)))
                 self.current_saturated = is_saturated(data)
                 hot_windows = int(np.count_nonzero(powers > trigger_power))
                 if on_meter_update:

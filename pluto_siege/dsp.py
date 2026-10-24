@@ -109,7 +109,7 @@ def is_saturated(
     if data.dtype != np.complex64 or not data.flags["C_CONTIGUOUS"]:
         data = np.ascontiguousarray(data, dtype=np.complex64)
     flat = data.view(np.float32)
-    return bool(max(float(flat.max()), -float(flat.min())) >= limit)
+    return bool(max(float(np.max(flat)), -float(np.min(flat))) >= limit)
 
 
 def calculate_snr_db(
