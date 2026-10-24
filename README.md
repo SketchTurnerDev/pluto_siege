@@ -106,7 +106,7 @@ pluto_siege
 ## Demo
 
 <p align="center">
-  <video src="https://github.com/user-attachments/assets/14e9c92c-dbb2-4319-bbe0-3d61b8c131dc" width="100%" controls></video>
+  <img src="https://github.com/user-attachments/assets/c3258d0d-f574-4a01-9853-89c5cb2afc33" alt="PlutoSiege Demo" width="100%">
 </p>
 
 ## Application Menu

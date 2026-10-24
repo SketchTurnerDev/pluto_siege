@@ -28,7 +28,7 @@ from pluto_siege.device import cleanup_sdr, set_io_timeout
 from pluto_siege.dsp import max_subwindow_dbfs, peak_window_dbfs
 from pluto_siege.engine import CaptureEngine, LoopbackTester, TransmitEngine
 from pluto_siege.gps import GPSFix
-from pluto_siege.settings import validate_config, validate_settings
+from pluto_siege.settings import validate_settings
 from pluto_siege.sigmf import load_sigmf_meta, save_sigmf_pair
 from pluto_siege.sound import _CUES, SoundCue, _generate_wav
 from pluto_siege.ui.screens.transmit import _label_for_recording
