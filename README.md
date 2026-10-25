@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/pluto_siege/"><img src="https://img.shields.io/pypi/v/pluto_siege?style=for-the-badge&logo=pypi&logoColor=white&color=blue" alt="PyPI"></a>
+  <a href="https://pypi.org/project/pluto-siege/"><img src="https://img.shields.io/pypi/v/pluto-siege?style=for-the-badge&logo=pypi&logoColor=white&color=blue" alt="PyPI"></a>
   <img src="https://img.shields.io/badge/Python-3.9+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
   <a href="https://github.com/SketchTurnerDev/pluto_siege/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blueviolet.svg?style=for-the-badge" alt="License"></a>
   <img src="https://img.shields.io/badge/Hardware-ADALM--Pluto-0099FF?style=for-the-badge" alt="Hardware">

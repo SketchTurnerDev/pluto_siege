@@ -22,7 +22,7 @@ import os
 from typing import Any
 
 AUTHOR = "SketchTurnerDev"  # recorded in SigMF metadata as core:author
-VERSION = "2.0.2"
+VERSION = "2.0.3"
 LICENSE = "GPL-3.0-or-later"
 LICENSE_SHORT = "GNU GPLv3"
 
