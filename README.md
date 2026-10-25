@@ -7,13 +7,13 @@
 <p align="center">
   <a href="https://pypi.org/project/pluto_siege/"><img src="https://img.shields.io/pypi/v/pluto_siege?style=for-the-badge&logo=pypi&logoColor=white&color=blue" alt="PyPI"></a>
   <img src="https://img.shields.io/badge/Python-3.9+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/License-GPL--3.0-blueviolet.svg?style=for-the-badge" alt="License">
+  <a href="https://github.com/SketchTurnerDev/pluto_siege/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-blueviolet.svg?style=for-the-badge" alt="License"></a>
   <img src="https://img.shields.io/badge/Hardware-ADALM--Pluto-0099FF?style=for-the-badge" alt="Hardware">
   <img src="https://img.shields.io/badge/Format-SigMF-orange?style=for-the-badge" alt="SigMF">
 </p>
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/967ccd8d-13ce-4795-80d5-c4c49010d6ba" alt="PlutoSiege Screenshot" width="100%">
+  <img src="https://raw.githubusercontent.com/SketchTurnerDev/pluto_siege/main/assets/screenshot.png" alt="PlutoSiege Screenshot" width="100%">
 </p>
 
 > **REGULATORY DISCLAIMER**  
@@ -109,7 +109,7 @@ python pluto_siege.py
 ## Demo
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/c3258d0d-f574-4a01-9853-89c5cb2afc33" alt="PlutoSiege Demo" width="100%">
+  <img src="https://raw.githubusercontent.com/SketchTurnerDev/pluto_siege/main/assets/demo.gif" alt="PlutoSiege Demo" width="100%">
 </p>
 
 ## Application Menu
@@ -162,4 +162,4 @@ Configures radio parameters, trigger behavior, GPS integration, and interface pr
 
 ## License
 
-Distributed under the **GNU General Public License v3.0** (GPL-3.0). See [`LICENSE`](LICENSE) for details.
+Distributed under the **GNU General Public License v3.0** (GPL-3.0). See [`LICENSE`](https://github.com/SketchTurnerDev/pluto_siege/blob/main/LICENSE) for details.
