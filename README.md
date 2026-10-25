@@ -5,6 +5,7 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/pluto_siege/"><img src="https://img.shields.io/pypi/v/pluto_siege?style=for-the-badge&logo=pypi&logoColor=white&color=blue" alt="PyPI"></a>
   <img src="https://img.shields.io/badge/Python-3.9+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/License-GPL--3.0-blueviolet.svg?style=for-the-badge" alt="License">
   <img src="https://img.shields.io/badge/Hardware-ADALM--Pluto-0099FF?style=for-the-badge" alt="Hardware">
@@ -77,7 +78,21 @@ sudo pacman -S gpsd
 
 > **Note:** Configure and start the `gpsd` service according to your specific GPS receiver hardware (USB dongle, UART module, Bluetooth, or virtual source) so that it listens on `127.0.0.1:2947`. Once running, enable GPS in PlutoSiege **Settings** (`Enable GPS (gpsd): yes`).
 
-### 3. Python Package & Setup
+### 3. Install & Run PlutoSiege
+
+#### Option A: Via pip / pipx (Recommended)
+Install directly from PyPI:
+```bash
+pipx install pluto_siege
+# or: pip install pluto_siege
+```
+
+Launch from any terminal:
+```bash
+pluto_siege
+```
+
+#### Option B: From Source (Clone Repository)
 Clone the repository and install dependencies:
 ```bash
 git clone https://github.com/SketchTurnerDev/pluto_siege.git
@@ -85,22 +100,10 @@ cd pluto_siege
 pip install -r requirements.txt
 ```
 
-## Quick Start
-
 Launch via the main script:
 ```bash
 python pluto_siege.py
-```
-
-Or run as a package:
-```bash
-python -m pluto_siege
-```
-
-Or install in editable mode:
-```bash
-pip install -e .
-pluto_siege
+# or: python -m pluto_siege
 ```
 
 ## Demo
