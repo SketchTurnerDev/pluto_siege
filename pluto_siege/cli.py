@@ -218,7 +218,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     """Construct the command-line argument parser for PlutoSiege."""
     parser_kwargs: dict[str, Any] = {
         "prog": "pluto_siege",
-        "description": "PlutoSiege - ISM-band RF capture and replay tool for PlutoSDR.",
+        "description": "PlutoSiege - RF capture and replay tool for PlutoSDR.",
         "add_help": False,
         "allow_abbrev": False,
         "formatter_class": _PlutoHelpFormatter,

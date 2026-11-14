@@ -14,25 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""PlutoSDR capture and replay tool for short ISM-band bursts.
-
-A full-screen terminal application that records brief RF transmissions - car
-remotes, doorbells, weather stations and similar OOK/ASK devices - and replays
-them. Recordings are written as SigMF pairs so they can be opened in other
-tools as well.
-
-Usage:
-    python3 -m pluto_siege
-
-Requires Python 3.9+, an interactive terminal, an ADALM-Pluto (or compatible
-AD936x device) and:
-    pip install -r requirements.txt
-
-Transmitting is regulated. Replay only signals you are licensed or permitted to
-emit, into a dummy load or at the lowest gain that does the job.
-
-Author: SketchTurnerDev
-"""
+"""RF Capture & Replay Tool for PlutoSDR."""
 
 from pluto_siege.constants import AUTHOR, LICENSE, VERSION
 

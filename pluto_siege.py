@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""PlutoSDR capture and replay tool for short ISM-band bursts.
+"""RF capture and replay tool for PlutoSDR.
 
 Thin launcher that delegates to the pluto_siege package.
 

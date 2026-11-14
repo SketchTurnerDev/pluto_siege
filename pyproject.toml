@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pluto_siege"
-version = "2.1.0"
-description = "PlutoSDR ISM-band RF capture and replay tool (433 MHz, 868 MHz, etc.)."
+version = "2.1.1"
+description = "RF Capture & Replay Tool for PlutoSDR"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 authors = [
@@ -22,7 +22,6 @@ keywords = [
     "868mhz",
     "adalm-pluto",
     "ham-radio",
-    "ism-band",
     "pentesting",
     "pluto-sdr",
     "pluto-siege",
