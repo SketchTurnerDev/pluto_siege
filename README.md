@@ -21,7 +21,7 @@
 
 ## About
 
-**PlutoSiege** is a terminal application (TUI) for recording and replaying short ISM-band RF bursts (e.g. 433 MHz, 868 MHz) from car remotes, garage doors, doorbells, and wireless sensors.
+**PlutoSiege** is a terminal application (TUI) and command-line utility (CLI) for recording and replaying short ISM-band RF bursts (e.g. 433 MHz, 868 MHz) from car remotes, garage doors, doorbells, and wireless sensors.
 
 Built for the **ADALM-Pluto (AD9363/AD9361)** SDR architecture, it saves recordings in standard **SigMF (Signal Metadata Format)** so they can be opened in other SDR tools like URH, IQEngine, GNU Radio, or Inspectrum.
 
@@ -30,12 +30,14 @@ Fully supports both official **Analog Devices ADALM-Pluto** hardware (Rev. B / R
 
 ## Features
 
+- **Single & Continuous Capture**: Capture single RF bursts or enable **Auto capture** (`--auto-capture true`) to loop continuously and save numbered multi-burst recordings with collision-safe filenames.
 - **Level Metering**: Real-time dBFS level meter with saturation (`SAT!`) warning.
-- **Threshold Detection**: Automated noise floor estimation or manual threshold setting.
+- **Threshold Detection**: Automated noise floor estimation (with optional periodic recalibration for mobile capture) or manual threshold setting.
 - **Pre-Trigger Buffer**: Keeps a ring buffer of history before trigger so preambles are not missed.
-- **SigMF Format**: Saves `.sigmf-meta` and `.sigmf-data` pairs.
+- **SigMF Format**: Saves `.sigmf-meta` and `.sigmf-data` pairs in a configurable recordings directory.
 - **GPS Geotagging**: Records precise coordinates in SigMF metadata via `gpsd` and displays geotags during replay.
-- **Digital Loopback Test**: Built-in test screen to check hardware loopback and SNR.
+- **Digital Loopback Test**: Built-in internal digital BIST loopback test (at 1 GHz) to check hardware health and SNR without external antennas.
+- **Full CLI & Headless Mode**: Launch any mode or override any setting from the command line, list available recordings, or run completely headless without curses.
 - **Linux Native**: Built and optimized specifically for Linux environments (supports all major distribution families: Debian-based, RPM-based, Arch-based, etc.).
 
 ## Installation
@@ -76,7 +78,7 @@ sudo dnf install -y gpsd gpsd-clients
 sudo pacman -S gpsd
 ```
 
-> **Note:** Configure and start the `gpsd` service according to your specific GPS receiver hardware (USB dongle, UART module, Bluetooth, or virtual source) so that it listens on `127.0.0.1:2947`. Once running, enable GPS in PlutoSiege **Settings** (`Enable GPS (gpsd): yes`).
+> **Note:** Configure and start the `gpsd` service according to your specific GPS receiver hardware (USB dongle, UART module, Bluetooth, or virtual source) so that it listens on `127.0.0.1:2947`. Once running, enable GPS in PlutoSiege **Settings** (`Enable GPS (gpsd): yes`) or via CLI (`--enable-gps true`).
 
 ### 3. Install & Run PlutoSiege
 
@@ -118,47 +120,66 @@ The main menu provides access to all core operations:
 
 ### 1. Capture
 Listens for incoming RF bursts on the configured receiver frequency (`rx_freq`).
+- Captures a single burst by default, or loops continuously (numbering saved bursts `[#1]`, `[#2]`, ... until stopped with `Esc` / `Q` in TUI or `Ctrl+C` in headless mode) when **Auto capture** (`--auto-capture true`) is enabled.
 - Real-time dBFS level meter with saturation (`SAT!`) warnings.
 - Automated noise floor estimation or manual threshold detection.
 - Pre-trigger history ring buffer to preserve signal preambles.
 - Saves captures as standard SigMF (`.sigmf-meta` and `.sigmf-data`) pairs with optional GPS geolocation tags.
 
 ### 2. Transmit
-Browse and replay saved SigMF recordings.
+Browse and replay saved SigMF recordings from the configured recordings directory (`records_dir`).
 - Displays recorded timestamp, center frequency, sample rate, sample count, and GPS coordinates.
-- Replays signals via the PlutoSDR transmitter on the configured frequency (`tx_freq`).
+- Replays signals via the PlutoSDR transmitter at the exact frequency (`core:frequency`) and sample rate (`core:sample_rate`) stored in `.sigmf-meta`.
 - In-place deletion of unwanted recordings (`D` or `Delete`).
 
 ### 3. Loopback Test
 Internal hardware diagnostic to verify the SDR transceiver and USB/DMA pipeline.
-- Transmits an internal digital test tone through the AD936x loopback path.
+- Enables the AD936x internal digital BIST loopback (`loopback = 1`) at 1 GHz without transmitting over the air.
 - Calculates received Signal-to-Noise Ratio (SNR) to confirm hardware health.
 
-### 4. Settings
-Configures radio parameters, trigger behavior, GPS integration, and interface preferences. Settings can be edited directly in the TUI and are saved to `settings.json`.
+### 4. Settings & CLI Parameters
+Configures radio parameters, trigger behavior, GPS integration, and interface preferences. All settings can be edited interactively in the TUI **Settings** screen or passed via command-line flags.
 
-| Parameter | Type | Default | Description |
+| Flags / Parameter | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `pluto_uri` | `str` | `usb:` | Pluto connection URI (`usb:` or `ip:`). |
-| `pluto_ip` | `str` | `192.168.2.1` | Remembered Pluto IP address when toggling between USB and IP modes. |
-| `rx_freq` | `int` | `433920000` | Receiver center frequency in Hz. |
-| `tx_freq` | `int` | `433920000` | Transmitter center frequency in Hz. |
-| `permit_out_of_spec_frequency` | `bool` | `false` | Allows tuning outside 325 MHz – 3.8 GHz range (up to 70 MHz – 6.0 GHz). |
-| `sample_rate` | `int` | `2100000` | Sample rate in Hz (521 kSPS – 61.44 MSPS). |
-| `rx_gain` | `float` | `15.0` | Manual RX hardware gain in dB (0.0 to 74.5 dB). |
-| `tx_gain` | `float` | `0.0` | Manual TX attenuation gain in dB (-89.75 to 0.0 dB). |
-| `auto_threshold` | `bool` | `true` | Automated noise floor calculation. |
-| `auto_trigger_margin` | `float` | `8.0` | Margin in dB above noise floor required to trigger capture (1.0 to 30.0 dB). |
-| `manual_threshold` | `float` | `-30.0` | Fixed trigger threshold in dBFS when auto is off. |
-| `pre_trigger_buffers` | `int` | `2` | Number of pre-trigger buffers kept in memory. |
-| `silence_seconds` | `float` | `0.80` | Silence required to stop recording. |
-| `max_post_trigger_seconds` | `float` | `4.00` | Maximum recording length after trigger. |
-| `rx_buffer_size` | `int` | `32768` | DMA buffer size in samples (1024 to 32768). |
-| `enable_gps` | `bool` | `false` | Hardware GPS geolocation in SigMF recordings via gpsd daemon. |
-| `gpsd_host` | `str` | `127.0.0.1` | Local or remote gpsd daemon host address. |
-| `gpsd_port` | `int` | `2947` | gpsd daemon TCP port (default 2947). |
-| `enable_sound` | `bool` | `true` | Acoustic cue feedback for trigger, TX, and status events. |
-| `enable_mouse` | `bool` | `true` | Terminal mouse interaction support. |
+| `--pluto-uri, --pu` | `str` | `usb:` | PlutoSDR `libiio` context URI (`usb:`, `usb:1.4.5`, `ip:192.168.2.1`, `local:`). |
+| `--rx-freq, --rf` | `int` | `433.92M` | Receiver center frequency in Hz; supports `k`/`M`/`G` suffixes and bare MHz shorthand (`70M - 6G`; e.g. `433`, `868`). |
+| `--sample-rate, --sr` | `int` | `2.1M` | Sample rate in SPS; supports `k`/`M` suffixes (`521k - 61.44M`). |
+| `--rf-bandwidth, --rb` | `int` | `0` | Analog RF filter bandwidth in Hz, or `0`/`auto` to follow `--sample-rate`; supports `k`/`M` suffixes (`0` or `200k - 56M`). |
+| `--rx-gain, --rg` | `float` | `15.0` | Manual RX hardware gain in dB (`-10.0 .. 74.5`). |
+| `--tx-gain, --tg` | `float` | `0.0` | Manual TX hardware gain in dB (`-89.75 .. 0.0`). |
+| `--tx-repeats, --tr` | `int` | `1` | Number of consecutive burst transmissions per replay (`1 .. 100`). |
+| `--auto-capture, --ac` | `bool` | `false` | Enable continuous multi-burst capture loop (`true` or `false`). |
+| `--auto-threshold, --at` | `bool` | `true` | Enable automatic noise floor threshold detection (`true` or `false`). |
+| `--auto-trigger-margin, --atm` | `float` | `8.0` | Trigger margin above noise floor in dB (`1.0 .. 30.0`; unused when `--auto-threshold` is `false`). |
+| `--auto-recal-seconds, --ars` | `float` | `0.0` | Periodic noise floor recalibration interval in seconds while listening, or `0` to disable; supports `ms`/`s` suffixes (`0.0 .. 600.0`; unused when `--auto-threshold` is `false`). |
+| `--manual-threshold, --mt` | `float` | `-30.0` | Fixed trigger threshold in dBFS (`-120.0 .. 0.0`; unused when `--auto-threshold` is `true`). |
+| `--pre-trigger-buffers, --ptb` | `int` | `2` | Number of pre-trigger history buffers kept in memory (`1 .. 50`). |
+| `--min-burst-seconds, --mbs` | `float` | `0.0` | Minimum active burst duration in seconds to filter short noise spikes, or `0` to disable; supports `ms`/`s` suffixes (`0.0 .. 5.0`). |
+| `--silence-seconds, --ss` | `float` | `0.8` | Continuous silence duration in seconds to stop recording; supports `ms`/`s` suffixes (`0.01 .. 10.0`). |
+| `--max-post-trigger-seconds, --mpts` | `float` | `4.0` | Maximum recording duration in seconds after trigger; supports `ms`/`s` suffixes (`0.1 .. 30.0`). |
+| `--rx-buffer-size, --rbs` | `int` | `32768` | DMA receive buffer size in samples (`1024 .. 1048576`). |
+| `--enable-gps, --eg` | `bool` | `false` | Enable GPS geolocation tagging via `gpsd` daemon (`true` or `false`). |
+| `--gpsd-host, --gh` | `str` | `127.0.0.1` | `gpsd` daemon hostname or IP address (unused when `--enable-gps` is `false`). |
+| `--gpsd-port, --gp` | `int` | `2947` | `gpsd` daemon TCP port (`1 .. 65535`; unused when `--enable-gps` is `false`). |
+| `--records-dir, --rd` | `str` | `./recordings` | Directory path for saving and loading SigMF recordings (`~/.pluto_siege/recordings` when installed via `pip`/`pipx`). |
+| `--enable-sound, --es` | `bool` | `true` | Enable acoustic sound effect cues (`true` or `false`). |
+| `--enable-mouse, --em` | `bool` | `true` | Enable terminal mouse support in the TUI (`true` or `false`). |
+
+### CLI-Only Options
+
+| Flags | Description |
+| :--- | :--- |
+| `--capture, -c` | Start in Capture mode. |
+| `--transmit, --tx` | Start in Transmit mode (pass a recording `#` from `--list`, `.sigmf-data` path, `'latest'`, or omit in TUI). |
+| `--loopback, --lb` | Run the internal digital Loopback Test. |
+| `--list, -l` | List available SigMF recordings in `records-dir` and exit. |
+| `--show-config, --sc` | Show current configuration and exit. |
+| `--headless, --hl` | Run in console text mode without the curses TUI (outputs plain logs without colors or live meter when redirected to a file/pipe; supports `NO_COLOR` / `FORCE_COLOR`). |
+| `--save, -s` | Persist CLI setting changes to `settings.json`. |
+| `--reset, -r` | Reset configuration to defaults and save to `settings.json`. |
+| `--version, -v` | Show program version and exit. |
+| `--help, -h` | Show help message and exit. |
 
 ## License
 

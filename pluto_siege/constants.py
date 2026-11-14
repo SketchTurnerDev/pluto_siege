@@ -22,7 +22,7 @@ import os
 from typing import Any
 
 AUTHOR = "SketchTurnerDev"  # recorded in SigMF metadata as core:author
-VERSION = "2.0.3"
+VERSION = "2.1.0"
 LICENSE = "GPL-3.0-or-later"
 LICENSE_SHORT = "GNU GPLv3"
 
@@ -39,17 +39,14 @@ RECORDS_DIR = os.path.join(BASE_DIR, "recordings")
 # Hardware limits and sample accounting
 # ---------------------------------------------------------------------------
 
-# AD9363 datasheet range, and the wider range the silicon usually tunes to.
-FREQ_RANGE_IN_SPEC = (325_000_000, 3_800_000_000)
-FREQ_RANGE_EXTENDED = (70_000_000, 6_000_000_000)
-
 # Lower bound is pyadi-iio's hard limit: its sample_rate setter raises below
 # 521 kSPS and loads a matching FIR decimation filter below ~2.083 MSPS.
+FREQ_RANGE = (70_000_000, 6_000_000_000)
 SAMPLE_RATE_RANGE = (521_000, 61_440_000)
-RX_GAIN_RANGE = (0.0, 74.5)
+RF_BANDWIDTH_RANGE = (200_000, 56_000_000)
+RX_GAIN_RANGE = (-10.0, 74.5)
 TX_GAIN_RANGE = (-89.75, 0.0)
-RX_BUFFER_RANGE = (1024, 32768)
-MAX_RF_BW = 20_000_000
+RX_BUFFER_RANGE = (1024, 1_048_576)
 
 # AD936x fractional-N PLL and BBPLL divider rounding tolerances on readback.
 LO_TOLERANCE_HZ = 10_000
@@ -68,6 +65,7 @@ BYTES_PER_SAMPLE = 8
 RAM_SAFETY_FACTOR = 2
 MAX_RAM_BYTES = 512 * 1024 * 1024
 MAX_TX_BURST_SAMPLES = 16 * 1024 * 1024
+TX_CHUNK_SAMPLES = 2 * 1024 * 1024
 TX_DRAIN_MARGIN_SECONDS = 0.30
 
 # Bound blocking libiio transfers so a stalled link fails instead of hanging.
@@ -86,6 +84,7 @@ TRIGGER_MARGIN_DB = 8.0
 RELEASE_MARGIN_DB = 3.0
 MANUAL_RELEASE_DROP_DB = 5.0
 MIN_TRIGGER_SUB_WINDOWS = 2
+BURST_GAP_BRIDGE_SECONDS = 0.010
 RX_FLUSH_BUFFERS = 3
 SATURATION_MARGIN = 0.98
 DB_EPSILON = 1e-12
@@ -94,20 +93,32 @@ DB_EPSILON = 1e-12
 # Settings ranges
 # ---------------------------------------------------------------------------
 
-PRE_TRIGGER_RANGE = (1, 20)
-SILENCE_RANGE = (0.1, 5.0)
-POST_TRIGGER_RANGE = (0.5, 10.0)
+TX_REPEATS_RANGE = (1, 100)
+PRE_TRIGGER_RANGE = (1, 50)
+MIN_BURST_RANGE = (0.0, 5.0)
+SILENCE_RANGE = (0.01, 10.0)
+POST_TRIGGER_RANGE = (0.1, 30.0)
 THRESHOLD_RANGE = (-120.0, 0.0)
 AUTO_MARGIN_RANGE = (1.0, 30.0)
+AUTO_RECAL_RANGE = (0.0, 600.0)
+RECAL_INDICATOR_SECONDS = 2.0
 
 # ---------------------------------------------------------------------------
 # Loopback test
 # ---------------------------------------------------------------------------
 
+LOOPBACK_FREQ_HZ = 1_000_000_000
 LOOPBACK_TONE_HZ = 100_000.0
 LOOPBACK_TONE_BINS = 10
 LOOPBACK_TX_AMPLITUDE = 0.6
 LOOPBACK_MIN_SNR_DB = 10.0
+
+# ---------------------------------------------------------------------------
+# UI / telemetry meter defaults
+# ---------------------------------------------------------------------------
+
+METER_REFRESH_SECONDS = 0.1
+METER_FLOOR_DBFS = -80.0
 
 # ---------------------------------------------------------------------------
 # Logo

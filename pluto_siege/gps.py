@@ -203,8 +203,13 @@ class GPSManager:
         with self._lifecycle_lock:
             self._stop_event.set()
             thread = self._thread
-            active_socket = self._socket
+            with self._lock:
+                active_socket = self._socket
             if active_socket is not None:
+                try:
+                    active_socket.shutdown(socket.SHUT_RDWR)
+                except (OSError, AttributeError):
+                    pass
                 try:
                     active_socket.close()
                 except OSError:
@@ -408,6 +413,23 @@ def init_gps(cfg: AppConfig) -> GPSManager:
     else:
         mgr.stop()
     return mgr
+
+
+def classify_gps_status(status_text: str, has_fix: bool = False) -> tuple[str, str]:
+    """Return (tag_prefix, severity_level) matching TUI and headless GPS indicators."""
+    lowered = status_text.lower()
+    if has_fix:
+        return "[FIX] ", "ok"
+    if any(
+        err in lowered
+        for err in ("cannot", "lost", "invalid", "permission", "missing", "error")
+    ):
+        return "[ERR] ", "err"
+    if "searching" in lowered:
+        return "[NO FIX] ", "warn"
+    if any(wait in lowered for wait in ("connecting", "waiting")):
+        return "[WAIT] ", "warn"
+    return "", "info"
 
 
 def stop_gps() -> None:

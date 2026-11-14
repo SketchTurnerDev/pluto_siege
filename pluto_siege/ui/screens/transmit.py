@@ -29,7 +29,7 @@ from pluto_siege.constants import (
     IO_TIMEOUT_UNAVAILABLE,
     RECORDS_DIR,
 )
-from pluto_siege.device import SDRDevice
+from pluto_siege.device import SDRDevice, format_tx_summary
 from pluto_siege.engine import TransmitEngine
 from pluto_siege.sigmf import load_sigmf_geolocation, load_sigmf_meta
 from pluto_siege.sound import SoundCue, play_cue
@@ -63,6 +63,7 @@ def _label_for_recording(f: str, bounds: tuple[int, int] | None = None) -> str:
         if err is not None or use_sr is None or use_freq is None:
             return name
         n_samples = os.path.getsize(f) // BYTES_PER_SAMPLE
+        duration = n_samples / use_sr if use_sr > 0 else 0.0
         if len(parts) >= 3:
             dt = datetime.datetime.strptime(
                 "_".join(parts[:2]), "%Y%m%d_%H%M%S"
@@ -80,17 +81,21 @@ def _label_for_recording(f: str, bounds: tuple[int, int] | None = None) -> str:
             geo_tag = ""
         return (
             f"{dt_str}  {use_freq / 1e6:.3f} MHz  "
-            f"{use_sr / 1e6:.2f} MSPS  {n_samples:,} Samples{geo_tag}"
+            f"{use_sr / 1e6:.2f} MSPS  {n_samples:,} samples ({duration:.2f} s){geo_tag}"
         )
     except (OSError, ValueError, KeyError):
         return name
 
 
 def pick_recording(
-    win: curses.window, bounds: tuple[int, int] | None = None
+    win: curses.window,
+    bounds: tuple[int, int] | None = None,
+    config: AppConfig | None = None,
 ) -> str | None:
     try:
-        os.makedirs(RECORDS_DIR, exist_ok=True)
+        cfg = CONFIG if config is None else config
+        records_dir = cfg.records_dir or RECORDS_DIR
+        os.makedirs(records_dir, exist_ok=True)
     except OSError as e:
         message_box(win, "Transmit", [(f"Cannot open recordings folder: {e}", C_ERR)])
         return None
@@ -98,7 +103,7 @@ def pick_recording(
     sel_idx = 0
     while True:
         files = sorted(
-            glob.glob(os.path.join(RECORDS_DIR, "*.sigmf-data")), reverse=True
+            glob.glob(os.path.join(records_dir, "*.sigmf-data")), reverse=True
         )
         if not files:
             message_box(
@@ -165,6 +170,7 @@ def do_transmit(
         return KEY_ESC
     log: list[tuple[str, int]] = []
     tx_ok = True
+    aborted = False
 
     def render(extra_hint: str = "Please wait...") -> None:
         start = draw_chrome(win, "Transmit Mode", extra_hint)
@@ -176,17 +182,14 @@ def do_transmit(
         log.append(("Configuring transmitter...", C_DIM))
         render()
 
-        data, use_sr, use_freq = TransmitEngine.prepare_transmission(
-            path, bounds=cfg.freq_bounds
-        )
+        data, use_sr, use_freq = TransmitEngine.prepare_transmission(path)
 
         sound_enabled = cfg.enable_sound
-        log.append(
-            (
-                f"{use_freq / 1e6:.3f} MHz  {use_sr / 1e6:.2f} MSPS  {data.size:,} Samples",
-                C_DIM,
-            )
+        rf_line, file_line = format_tx_summary(
+            use_freq, use_sr, int(data.size), path, cfg
         )
+        log.append((rf_line, C_DIM))
+        log.append((file_line, C_DIM))
         geo = load_sigmf_geolocation(path)
         if geo is not None:
             lon, lat, alt = geo
@@ -198,24 +201,62 @@ def do_transmit(
                     C_DIM,
                 )
             )
-        log.append((f"Transmitting recording: {os.path.basename(path)}...", C_DIM))
-        play_cue(SoundCue.TX_START, enabled=sound_enabled)
-        render()
 
-        timeout_ok = TransmitEngine.transmit(sdr, data, use_sr, use_freq, config=cfg)
+        def check_tx_abort() -> bool:
+            nonlocal aborted
+            k = win.getch()
+            if k == curses.KEY_RESIZE:
+                render("Esc/Q = abort")
+            if k in (KEY_ESC, ord("q"), ord("Q")):
+                aborted = True
+                return True
+            return False
+
+        log.append(("Transmitting...", C_DIM))
+        play_cue(SoundCue.TX_START, enabled=sound_enabled)
+        render("Esc/Q = abort")
+
+        flush_input(win)
+        win.nodelay(True)
+        try:
+            timeout_ok = TransmitEngine.transmit(
+                sdr,
+                data,
+                use_sr,
+                use_freq,
+                config=cfg,
+                check_abort=check_tx_abort,
+            )
+        finally:
+            try:
+                win.nodelay(False)
+            except curses.error:
+                pass
+
         if not timeout_ok:
             log.append((IO_TIMEOUT_UNAVAILABLE, C_WARN))
 
-        play_cue(SoundCue.TX_COMPLETE, enabled=sound_enabled)
-        log.append(("Signal replayed successfully!", C_OK))
+        if aborted:
+            play_cue(SoundCue.ALERT, enabled=sound_enabled)
+            log.append(("Transmission aborted.", C_WARN))
+        else:
+            play_cue(SoundCue.TX_COMPLETE, enabled=sound_enabled)
+            log.append(("Signal replayed successfully!", C_OK))
     except (OSError, RuntimeError, ValueError) as e:
         tx_ok = False
         play_cue(SoundCue.FAIL, enabled=cfg.enable_sound)
         log.append((f"TX failed: {e}", C_ERR))
 
     flush_input(win)
-    title = "Transmit Complete" if tx_ok else "Transmit Failed"
-    hint = "Enter/R = replay ▎ Esc/Q = back" if tx_ok else "Enter/R = retry ▎ Esc/Q = back"
+    if not tx_ok:
+        title = "Transmit Failed"
+        hint = "Enter/R = retry ▎ Esc/Q = back"
+    elif aborted:
+        title = "Transmit Aborted"
+        hint = "Enter/R = replay ▎ Esc/Q = back"
+    else:
+        title = "Transmit Complete"
+        hint = "Enter/R = replay ▎ Esc/Q = back"
     return scroll_view(
         win,
         title,
@@ -229,9 +270,8 @@ def screen_transmit(
     win: curses.window, sdr: SDRDevice, config: AppConfig | None = None
 ) -> None:
     cfg = CONFIG if config is None else config
-    bounds = cfg.freq_bounds
     while True:
-        path = pick_recording(win, bounds=bounds)
+        path = pick_recording(win, config=cfg)
         if path is None:
             return
         while True:

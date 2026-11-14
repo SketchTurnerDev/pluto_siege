@@ -25,7 +25,9 @@ import time
 from dataclasses import dataclass
 from typing import Any, overload
 
-from pluto_siege.constants import LOGO_LINES
+from pluto_siege.config import parse_number
+from pluto_siege.constants import LOGO_LINES, METER_FLOOR_DBFS
+from pluto_siege.gps import classify_gps_status
 
 os.environ.setdefault("ESCDELAY", "50")
 
@@ -45,12 +47,10 @@ CONTENT_X = 2
 MENU_X = 4
 RIGHT_INSET = 4
 FOOTER_ROW_OFFSET = 1
-MIN_WIN_HEIGHT = 37
-MIN_WIN_WIDTH = 97
+MIN_WIN_HEIGHT = 39
+MIN_WIN_WIDTH = 110
 
 FLASH_SECONDS = 0.9
-METER_REFRESH_SECONDS = 0.1
-METER_FLOOR_DBFS = -80.0
 KEY_ENTER = (
     10,
     13,
@@ -61,17 +61,11 @@ KEY_ENTER = (
 KEY_ESC = 27
 ESC_DELAY_MS = 50
 
-BUTTON_CLICK = getattr(curses, "BUTTON1_CLICKED", 0) | getattr(
-    curses, "BUTTON1_PRESSED", 0
-)
+BUTTON_CLICK = getattr(curses, "BUTTON1_CLICKED", 0) | getattr(curses, "BUTTON1_PRESSED", 0)
 BUTTON_DOUBLE = getattr(curses, "BUTTON1_DOUBLE_CLICKED", 0)
-BUTTON_RIGHT = getattr(curses, "BUTTON3_CLICKED", 0) | getattr(
-    curses, "BUTTON3_PRESSED", 0
-)
+BUTTON_RIGHT = getattr(curses, "BUTTON3_CLICKED", 0) | getattr(curses, "BUTTON3_PRESSED", 0)
 WHEEL_UP = getattr(curses, "BUTTON4_PRESSED", 0) | getattr(curses, "BUTTON4_CLICKED", 0)
-WHEEL_DOWN = getattr(curses, "BUTTON5_PRESSED", 0) | getattr(
-    curses, "BUTTON5_CLICKED", 0
-)
+WHEEL_DOWN = getattr(curses, "BUTTON5_PRESSED", 0) | getattr(curses, "BUTTON5_CLICKED", 0)
 
 
 @dataclass(frozen=True)
@@ -273,7 +267,7 @@ def update_term_size(win: curses.window | None = None) -> None:
 
 
 def screen_is_usable(win: curses.window) -> bool:
-    """Return True if the terminal window meets minimum 97x37 dimensions."""
+    """Return True if the terminal window meets minimum 110x39 dimensions."""
     try:
         update_term_size(win)
         h, w = win.getmaxyx()
@@ -328,7 +322,12 @@ def draw_chrome(win: curses.window, subtitle: str = "", hint: str = "") -> int:
 
 
 def draw_signal_meter(
-    win: curses.window, row: int, lvl: float, trigger_threshold: float, saturated: bool
+    win: curses.window,
+    row: int,
+    lvl: float,
+    trigger_threshold: float,
+    saturated: bool,
+    recalibrating: bool = False,
 ) -> None:
     """Render signal level progress bar widget with dBFS readout and saturation indicator."""
     try:
@@ -363,16 +362,17 @@ def draw_signal_meter(
     _put(win, row, 11 + meter_w, "]", cp(C_DIM))
     info = f" {level:6.1f} dBFS   thr {threshold:.0f}"
     _put(win, row, 12 + meter_w, info, cp(C_DIM))
-    sat_x = 12 + meter_w + len(info) + 1
+    curr_x = 12 + meter_w + len(info)
+    _put(win, row, curr_x, " " * max(0, w - 1 - curr_x), 0)
+    if recalibrating:
+        recal_tag = " (recal)"
+        _put(win, row, curr_x, recal_tag, cp(C_TITLE))
+        curr_x += len(recal_tag)
     if saturated:
-        _put(win, row, sat_x, "SAT!", cp(C_ERR) | curses.A_BOLD)
-    else:
-        _put(win, row, sat_x, "    ", 0)
+        _put(win, row, curr_x + 1, "SAT!", cp(C_ERR) | curses.A_BOLD)
 
 
-def draw_gps_status(
-    win: curses.window, row: int, status_text: str, has_fix: bool = False
-) -> None:
+def draw_gps_status(win: curses.window, row: int, status_text: str, has_fix: bool = False) -> None:
     """Render live GPS status line with colored status tags."""
     try:
         h, w = win.getmaxyx()
@@ -382,25 +382,15 @@ def draw_gps_status(
         return
     if row >= h - 1:
         return
-    lowered = status_text.lower()
-    if has_fix:
+    tag, level = classify_gps_status(status_text, has_fix=has_fix)
+    if level == "ok":
         color = cp(C_OK) | curses.A_BOLD
-        tag = "[FIX] "
-    elif any(
-        err in lowered
-        for err in ("cannot", "lost", "invalid", "permission", "missing", "error")
-    ):
+    elif level == "err":
         color = cp(C_ERR)
-        tag = "[ERR] "
-    elif "searching" in lowered:
+    elif level == "warn":
         color = cp(C_WARN)
-        tag = "[NO FIX] "
-    elif any(wait in lowered for wait in ("connecting", "waiting")):
-        color = cp(C_WARN)
-        tag = "[WAIT] "
     else:
         color = cp(C_DIM)
-        tag = ""
 
     label = "GPS:    "
     _put(win, row, CONTENT_X, label, cp(C_DIM))
@@ -409,9 +399,7 @@ def draw_gps_status(
     _put(win, row, CONTENT_X + len(label), msg[:avail_w].ljust(avail_w), color)
 
 
-def _content_rows(
-    win: curses.window, start: int, reserved: int = 2
-) -> tuple[int, bool]:
+def _content_rows(win: curses.window, start: int, reserved: int = 2) -> tuple[int, bool]:
     """Rows free for content, and whether the reserved rows below exist."""
     if start < 0:
         return (0, False)
@@ -420,9 +408,7 @@ def _content_rows(
     return (room, True) if room >= 1 else (1, False)
 
 
-def _tail(
-    log: list[tuple[str, int]], win: curses.window, start: int, reserved: int
-) -> int:
+def _tail(log: list[tuple[str, int]], win: curses.window, start: int, reserved: int) -> int:
     """Draw the most recent log lines that fit. Returns the number drawn."""
     avail, _ = _content_rows(win, start, reserved)
     visible = log[-avail:] if avail > 0 else []
@@ -456,7 +442,7 @@ def scroll_view(
     win: curses.window,
     subtitle: str,
     lines: list[tuple[str, int]],
-    hint: str = "Enter/Esc = back",
+    hint: str = "Enter/Esc/Q = back",
     exit_keys: tuple[int, ...] = (KEY_ESC, ord("q"), ord("Q")) + KEY_ENTER,
 ) -> int:
     """Show scrollable lines until one of exit_keys is pressed. Returns that key."""
@@ -624,11 +610,7 @@ def menu_select(
                     hitbox = hitboxes.get(clicked_idx)
                     if hitbox is not None and hitbox.contains(mx, my):
                         if clicked_idx == idx or (bstate & BUTTON_DOUBLE):
-                            return (
-                                (clicked_idx, KEY_ENTER[0])
-                                if action_keys
-                                else clicked_idx
-                            )
+                            return (clicked_idx, KEY_ENTER[0]) if action_keys else clicked_idx
                         idx = clicked_idx
         else:
             idx = _move_cursor(idx, k, len(items), avail)
@@ -637,18 +619,29 @@ def menu_select(
 def confirm_dialog(win: curses.window, subtitle: str, question: str) -> bool:
     """Ask a confirmation question with keyboard and mouse button support."""
     selected_yes = True
+    cancel_keys = (KEY_ESC, ord("n"), ord("N"), ord("q"), ord("Q"))
+    toggle_keys = (
+        curses.KEY_LEFT,
+        ord("h"),
+        ord("H"),
+        curses.KEY_RIGHT,
+        ord("l"),
+        ord("L"),
+        ord(" "),
+        ord("\t"),
+    )
     flush_input(win)
     win.nodelay(False)
     while True:
         start = draw_chrome(
             win,
             subtitle,
-            "Left/Right/Space = choose ▎ Enter = confirm ▎ Y = yes ▎ N/Esc = no",
+            "Left/Right/Space = choose ▎ Enter = confirm ▎ Y = yes ▎ N/Esc/Q = no",
         )
         if start == -1:
             win.refresh()
             key = win.getch()
-            if key in (KEY_ESC, ord("n"), ord("N")):
+            if key in cancel_keys:
                 return False
             continue
         _put(win, start, CONTENT_X, question, cp(C_WARN))
@@ -663,9 +656,9 @@ def confirm_dialog(win: curses.window, subtitle: str, question: str) -> bool:
             return selected_yes
         if key in (ord("y"), ord("Y")):
             return True
-        if key in (KEY_ESC, ord("n"), ord("N")):
+        if key in cancel_keys:
             return False
-        if key in (curses.KEY_LEFT, ord("h"), curses.KEY_RIGHT, ord("l"), ord(" ")):
+        if key in toggle_keys:
             selected_yes = not selected_yes
         elif key == getattr(curses, "KEY_RESIZE", -1):
             continue
@@ -712,13 +705,19 @@ def edit_text(
             field_w = max(1, w - 5)
             off = max(0, pos - field_w + 1)
             _put(win, row, CONTENT_X, "> " + "".join(buf[off : off + field_w]))
+            draw_flash(win, row=row + 1)
             draw_footer(win, "Enter = confirm ▎ Esc = cancel")
             try:
                 win.move(row, 4 + pos - off)
             except curses.error:
                 pass
             win.refresh()
+            _set_flash_timeout(win)
             k = win.getch()
+            if k == -1:
+                continue
+            if k != curses.KEY_RESIZE:
+                clear_flash()
             if k in KEY_ENTER:
                 return "".join(buf)
             elif k == KEY_ESC:
@@ -750,71 +749,12 @@ def edit_text(
                     _mid, mx, my, _mz, bstate = m
                     if bstate & BUTTON_RIGHT:
                         return None
-                    elif (
-                        bstate & (BUTTON_CLICK | BUTTON_DOUBLE)
-                        and my == row
-                        and mx >= 4
-                    ):
+                    elif bstate & (BUTTON_CLICK | BUTTON_DOUBLE) and my == row and mx >= 4:
                         pos = max(0, min(len(buf), off + (mx - 4)))
     finally:
+        clear_flash()
+        _reset_flash_timeout(win)
         set_cursor_visible(False)
-
-
-def parse_number(
-    raw: str, cast_type: type, min_val: float, max_val: float
-) -> int | float:
-    """Parse numeric input string with unit multipliers (k, M, G, Hz, SPS).
-
-    Auto-converts decimal MHz (e.g. 433.92) to Hz when cast_type is int and min_val >= 100_000.
-    """
-    cleaned = raw.strip().lower()
-    mult = 1.0
-    explicit_unit = False
-    for suffix, factor in (
-        ("ghz", 1e9),
-        ("g", 1e9),
-        ("msps", 1e6),
-        ("mhz", 1e6),
-        ("m", 1e6),
-        ("khz", 1e3),
-        ("k", 1e3),
-        ("sps", 1.0),
-        ("hz", 1.0),
-    ):
-        if cleaned.endswith(suffix):
-            cleaned = cleaned[: -len(suffix)].strip()
-            mult = factor
-            explicit_unit = True
-            break
-
-    try:
-        num = float(cleaned)
-    except (ValueError, OverflowError):
-        raise ValueError("Invalid number.") from None
-
-    if not math.isfinite(num):
-        raise ValueError("Value must be finite.")
-
-    num *= mult
-    if not math.isfinite(num):
-        raise ValueError("Value must be finite.")
-
-    if (
-        cast_type is int
-        and not explicit_unit
-        and min_val >= 100_000
-        and 0 < num < 10_000
-    ):
-        num *= 1e6
-        if not math.isfinite(num):
-            raise ValueError("Value must be finite.")
-
-    if cast_type is int:
-        rounded = round(num)
-        if abs(num - rounded) > 1e-3:
-            raise ValueError("Value must be an integer.")
-        return int(rounded)
-    return num
 
 
 def edit_number(
@@ -822,16 +762,18 @@ def edit_number(
     prompt: str,
     initial: Any,
     cast_type: type,
-    min_val: float,
-    max_val: float,
+    min_val: float | None = None,
+    max_val: float | None = None,
     redraw_fn: Any | None = None,
 ) -> Any | None:
     """Prompt until a number within range is entered. Returns None on Esc."""
     text = str(initial)
+    if min_val is not None and max_val is not None:
+        full_prompt = f"{prompt}  [{min_val} .. {max_val}]"
+    else:
+        full_prompt = prompt
     while True:
-        raw = edit_text(
-            win, f"{prompt}  [{min_val} .. {max_val}]", text, redraw_fn=redraw_fn
-        )
+        raw = edit_text(win, full_prompt, text, redraw_fn=redraw_fn)
         if raw is None:
             return None
         raw = raw.strip()
@@ -846,18 +788,79 @@ def edit_number(
         except OverflowError:
             _flash(win, "Invalid number.", C_ERR)
             continue
-        if val < min_val:
+        if min_val is not None and val < min_val:
             _flash(win, f"Must be >= {min_val}", C_ERR)
             continue
-        if val > max_val:
+        if max_val is not None and val > max_val:
             _flash(win, f"Must be <= {max_val}", C_ERR)
             continue
         return val
 
 
+_ACTIVE_FLASH: tuple[str, int, float] | None = None
+
+
+def clear_flash() -> None:
+    """Clear any active non-blocking status notification."""
+    global _ACTIVE_FLASH
+    _ACTIVE_FLASH = None
+
+
+def _flash_remaining_ms() -> int:
+    """Return remaining display time in milliseconds for the active flash message."""
+    global _ACTIVE_FLASH
+    if _ACTIVE_FLASH is None:
+        return 0
+    _msg, _pair, deadline = _ACTIVE_FLASH
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        _ACTIVE_FLASH = None
+        return 0
+    return max(1, math.ceil(remaining * 1000))
+
+
+def _set_flash_timeout(win: curses.window) -> None:
+    """Wait until the flash message expires so the screen redraws when it clears."""
+    remaining_ms = _flash_remaining_ms()
+    if hasattr(win, "timeout"):
+        try:
+            win.timeout(remaining_ms if remaining_ms > 0 else -1)
+        except curses.error:
+            pass
+
+
+def _reset_flash_timeout(win: curses.window) -> None:
+    """Restore blocking getch() mode on the window."""
+    if hasattr(win, "timeout"):
+        try:
+            win.timeout(-1)
+        except curses.error:
+            pass
+    try:
+        win.nodelay(False)
+    except (curses.error, AttributeError):
+        pass
+
+
+def draw_flash(win: curses.window, row: int | None = None) -> None:
+    """Render the active non-blocking flash message if it has not expired."""
+    if _flash_remaining_ms() <= 0 or _ACTIVE_FLASH is None:
+        return
+    msg, pair, _deadline = _ACTIVE_FLASH
+    try:
+        h, w = win.getmaxyx()
+    except (curses.error, AttributeError, TypeError, ValueError):
+        return
+    target_row = h - 3 if row is None else row
+    _put(win, target_row, CONTENT_X, msg.ljust(max(0, w - 4)), cp(pair))
+
+
 def _flash(win: curses.window, msg: str, pair: int) -> None:
-    h, w = win.getmaxyx()
-    _put(win, h - 3, CONTENT_X, msg.ljust(max(0, w - 4)), cp(pair))
-    win.refresh()
-    time.sleep(FLASH_SECONDS)
-    flush_input(win)
+    """Record and render a non-blocking status notification without freezing input."""
+    global _ACTIVE_FLASH
+    _ACTIVE_FLASH = (msg, pair, time.monotonic() + FLASH_SECONDS)
+    draw_flash(win)
+    try:
+        win.refresh()
+    except curses.error:
+        pass

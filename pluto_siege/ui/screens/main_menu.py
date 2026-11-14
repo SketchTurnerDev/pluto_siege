@@ -20,12 +20,15 @@ from __future__ import annotations
 
 import atexit
 import curses
-import signal
-import sys
 import threading
 import time
-from typing import Any
 
+from pluto_siege.cli import (
+    CLIOptions,
+    main,
+    resolve_transmit_target,
+    sig_handler,
+)
 from pluto_siege.config import CONFIG, AppConfig, save_settings
 from pluto_siege.device import SDRDevice, open_sdr, release_sdr
 from pluto_siege.gps import init_gps, stop_gps
@@ -33,8 +36,11 @@ from pluto_siege.sound import SoundCue, play_cue
 from pluto_siege.ui.screens.capture import screen_capture
 from pluto_siege.ui.screens.loopback import screen_loopback
 from pluto_siege.ui.screens.settings import screen_settings
-from pluto_siege.ui.screens.transmit import screen_transmit
+from pluto_siege.ui.screens.transmit import do_transmit, screen_transmit
 from pluto_siege.ui.widgets.framework import (
+    BUTTON_CLICK,
+    BUTTON_DOUBLE,
+    BUTTON_RIGHT,
     C_DIM,
     C_ERR,
     C_OK,
@@ -43,10 +49,16 @@ from pluto_siege.ui.widgets.framework import (
     ESC_DELAY_MS,
     KEY_ENTER,
     KEY_ESC,
+    WHEEL_DOWN,
+    WHEEL_UP,
+    HitBox,
+    _move_cursor,
     _put,
     cp,
     draw_chrome,
+    draw_list_row,
     flush_input,
+    get_mouse_event,
     init_colors,
     init_mouse,
     menu_select,
@@ -138,7 +150,7 @@ def reconnect_sdr(
     _set_active_sdr(new_sdr)
     init_gps(cfg)
     play_cue(SoundCue.SUCCESS, enabled=cfg.enable_sound)
-    message_box(win, "Reconnected", [(f"Connected: {model} at {uri}", C_OK)])
+    message_box(win, "Reconnected", [(f"Connected: PlutoSDR ({uri})", C_OK)])
     return new_sdr, model
 
 
@@ -158,7 +170,9 @@ def connect_screen(
 ) -> tuple[SDRDevice | None, str]:
     """Connect at startup, letting the user fix the URI. Returns (None, _) on exit."""
     cfg = CONFIG if config is None else config
-    hint = "Enter = settings ▎ R = retry ▎ Esc/Q = quit"
+    menu_hint = "Up/Down = move ▎ Enter = select ▎ R = retry ▎ S = settings ▎ Esc/Q = quit"
+    items = ["Retry Connection", "Settings", "Exit"]
+    idx = 0
     hw_model = "PlutoSDR"
     attempt = True
     err_msg = ""
@@ -168,7 +182,7 @@ def connect_screen(
             return None, hw_model
         uri = cfg.pluto_uri
         if attempt:
-            start_y = draw_chrome(win, "Startup", hint)
+            start_y = draw_chrome(win, "Startup", "Please wait...")
             _put(
                 win,
                 start_y,
@@ -181,7 +195,7 @@ def connect_screen(
                 sdr, hw_model = open_sdr(uri, hw_model)
                 _set_active_sdr(sdr)
                 init_gps(cfg)
-                _put(win, start_y + 1, CONTENT_X, f"Connected: {hw_model}", cp(C_OK))
+                _put(win, start_y + 1, CONTENT_X, f"Connected: PlutoSDR ({uri})", cp(C_OK))
                 win.refresh()
                 time.sleep(0.4)
                 return sdr, hw_model
@@ -189,21 +203,21 @@ def connect_screen(
                 err_msg = str(e)
                 attempt = False
 
-        start_y = draw_chrome(win, "Startup", hint)
+        start_y = draw_chrome(win, "Startup", menu_hint)
         if start_y == -1:
             win.refresh()
             k = win.getch()
             if k in (KEY_ESC, ord("q"), ord("Q")):
                 return None, hw_model
             continue
-        err_lines = [line.strip() for line in err_msg.splitlines() if line.strip()]
+        err_lines = [line.strip() for line in err_msg.splitlines() if line.strip()][:4]
         curr_y = start_y
         if len(err_lines) <= 1:
             msg = err_lines[0] if err_lines else "Unknown error"
-            _put(win, curr_y, CONTENT_X, f"Cannot connect: {msg}", cp(C_ERR))
+            _put(win, curr_y, CONTENT_X, f"Cannot connect to {uri}: {msg}", cp(C_ERR))
             curr_y += 1
         else:
-            _put(win, curr_y, CONTENT_X, "Cannot connect:", cp(C_ERR))
+            _put(win, curr_y, CONTENT_X, f"Cannot connect to {uri}:", cp(C_ERR))
             curr_y += 1
             for el in err_lines:
                 _put(win, curr_y, CONTENT_X + 2, el, cp(C_ERR))
@@ -213,34 +227,72 @@ def connect_screen(
             win,
             curr_y,
             CONTENT_X,
-            "Check the Pluto URI in Settings, then retry.",
+            "Check the Pluto connection settings or connect the device, then retry.",
             cp(C_WARN),
         )
-        _put(
-            win,
-            curr_y + 1,
-            CONTENT_X,
-            "You can still open Settings to change the URI.",
-            cp(C_WARN),
-        )
+        menu_start = curr_y + 2
+        hitboxes: dict[int, HitBox] = {}
+        for i, label in enumerate(items):
+            hitboxes[i] = draw_list_row(win, menu_start + i, label, i == idx)
         win.refresh()
 
         flush_input(win)
         win.nodelay(False)
         k = win.getch()
+        selected_action: str | None = None
         if k in (KEY_ESC, ord("q"), ord("Q")):
             return None, hw_model
         elif k == getattr(curses, "KEY_RESIZE", -1):
             continue
-        elif k in KEY_ENTER or k in (ord("s"), ord("S")):
+        elif k in KEY_ENTER:
+            selected_action = items[idx]
+        elif k in (ord("r"), ord("R"), ord("1")):
+            idx = 0
+            selected_action = "Retry Connection"
+        elif k in (ord("s"), ord("S"), ord("2")):
+            idx = 1
+            selected_action = "Settings"
+        elif k in (ord("e"), ord("E"), ord("3")):
+            idx = 2
+            selected_action = "Exit"
+        elif k == getattr(curses, "KEY_MOUSE", -1):
+            m = get_mouse_event()
+            if m is not None:
+                _mid, mx, my, _mz, bstate = m
+                if bstate & WHEEL_UP:
+                    idx = max(0, idx - 1)
+                elif bstate & WHEEL_DOWN:
+                    idx = min(len(items) - 1, idx + 1)
+                elif bstate & BUTTON_RIGHT:
+                    return None, hw_model
+                elif bstate & (BUTTON_CLICK | BUTTON_DOUBLE):
+                    clicked_idx = my - menu_start
+                    hitbox = hitboxes.get(clicked_idx)
+                    if hitbox is not None and hitbox.contains(mx, my):
+                        if clicked_idx == idx or (bstate & BUTTON_DOUBLE):
+                            selected_action = items[clicked_idx]
+                        else:
+                            idx = clicked_idx
+        else:
+            idx = _move_cursor(idx, k, len(items))
+
+        if selected_action == "Retry Connection":
+            attempt = True
+        elif selected_action == "Settings":
             screen_settings(win, config=cfg)
             init_gps(cfg)
             attempt = cfg.pluto_uri != uri
-        elif k in (ord("r"), ord("R")):
-            attempt = True
+            if not attempt:
+                idx = 0
+        elif selected_action == "Exit":
+            return None, hw_model
 
 
-def curses_app(win: curses.window, config: AppConfig | None = None) -> None:
+def curses_app(
+    win: curses.window,
+    config: AppConfig | None = None,
+    cli_opts: CLIOptions | None = None,
+) -> None:
     """Run the initialized UI lifecycle, always restoring terminal/device state."""
     cfg = CONFIG if config is None else config
     try:
@@ -261,8 +313,44 @@ def curses_app(win: curses.window, config: AppConfig | None = None) -> None:
         if sdr is None:
             return
 
-        items = ["Capture", "Transmit", "Loopback Test", "Settings", "Exit"]
+        items = [
+            "Capture",
+            "Transmit",
+            "Loopback Test",
+            "Settings",
+            "Exit",
+        ]
         idx = 0
+
+        if cli_opts is not None and cli_opts.mode is not None:
+            if cli_opts.mode == "capture":
+                idx = 0
+                screen_capture(win, sdr, hw_model, config=cfg)
+            elif cli_opts.mode == "transmit":
+                idx = 1
+                if cli_opts.transmit_path:
+                    try:
+                        tx_path = resolve_transmit_target(
+                            cli_opts.transmit_path, cfg.records_dir
+                        )
+                        while True:
+                            key = do_transmit(win, sdr, tx_path, config=cfg)
+                            if key not in KEY_ENTER and key not in (
+                                ord("r"),
+                                ord("R"),
+                            ):
+                                break
+                    except FileNotFoundError as err:
+                        message_box(win, "Transmit", [(str(err), C_ERR)])
+                else:
+                    screen_transmit(win, sdr, config=cfg)
+            elif cli_opts.mode == "loopback":
+                idx = 2
+                screen_loopback(win, sdr, config=cfg)
+
+            if not is_sdr_connected(sdr):
+                _cleanup_active_sdr()
+                sdr = None
         while True:
             choice = menu_select(
                 win,
@@ -331,32 +419,14 @@ def curses_app(win: curses.window, config: AppConfig | None = None) -> None:
         _cleanup_active_sdr()
 
 
-def sig_handler(signum: int, frame: Any) -> None:
-    """Defer cleanup to normal control flow; signal handlers must not lock."""
-    raise KeyboardInterrupt
-
-
-def main() -> None:
-    if not (sys.stdin.isatty() and sys.stdout.isatty()):
-        print("Requires an interactive terminal.", file=sys.stderr)
-        sys.exit(1)
-    for sig_name in ("SIGINT", "SIGTERM", "SIGHUP"):
-        sig = getattr(signal, sig_name, None)
-        if sig is not None:
-            try:
-                signal.signal(sig, sig_handler)
-            except (ValueError, OSError):
-                pass
-    try:
-        curses.wrapper(curses_app)
-    except KeyboardInterrupt:
-        pass
-    except curses.error as e:
-        print(f"Terminal error: {e}", file=sys.stderr)
-        sys.exit(1)
-    finally:
-        _cleanup_active_sdr()
-    print("Goodbye!")
+__all__ = [
+    "connect_screen",
+    "curses_app",
+    "is_sdr_connected",
+    "main",
+    "reconnect_sdr",
+    "sig_handler",
+]
 
 
 if __name__ == "__main__":

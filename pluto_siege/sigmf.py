@@ -30,8 +30,6 @@ from numpy.typing import NDArray
 
 from pluto_siege.constants import (
     AUTHOR,
-    FREQ_RANGE_EXTENDED,
-    FREQ_RANGE_IN_SPEC,
     RX_FULL_SCALE,
     SAMPLE_RATE_RANGE,
     VERSION,
@@ -139,6 +137,8 @@ def save_sigmf_pair(
     timestamp_iso: str,
     hw_model: str,
     gps_fix: GPSFix | None = None,
+    rx_gain: float | None = None,
+    rf_bandwidth: int | None = None,
 ) -> None:
     """Save captured IQ samples and metadata atomically as a SigMF pair."""
     if not isinstance(base_path, str) or not base_path:
@@ -154,17 +154,27 @@ def save_sigmf_pair(
 
     use_freq = _finite_int(freq)
     use_sr = _finite_int(sr)
-    if (
-        use_freq is None
-        or not FREQ_RANGE_EXTENDED[0] <= use_freq <= FREQ_RANGE_EXTENDED[1]
-    ):
-        raise ValueError("frequency is outside the supported tuning range")
+    if use_freq is None or use_freq <= 0:
+        raise ValueError("frequency must be a positive integer in Hz")
     if use_sr is None or not SAMPLE_RATE_RANGE[0] <= use_sr <= SAMPLE_RATE_RANGE[1]:
         raise ValueError("sample rate is outside the supported range")
     if not isinstance(timestamp_iso, str) or not timestamp_iso:
         raise ValueError("timestamp must be a non-empty string")
     if not isinstance(hw_model, str):
         raise TypeError("hardware model must be a string")
+
+    use_rx_gain: float | None = None
+    if rx_gain is not None:
+        use_rx_gain = _finite_float(rx_gain)
+        if use_rx_gain is None:
+            raise ValueError("rx_gain must be a finite number")
+        use_rx_gain = round(use_rx_gain, 2)
+
+    use_rf_bw: int | None = None
+    if rf_bandwidth is not None:
+        use_rf_bw = _finite_int(rf_bandwidth)
+        if use_rf_bw is None or use_rf_bw <= 0:
+            raise ValueError("rf_bandwidth must be a positive integer in Hz")
 
     data_path = base_path + ".sigmf-data"
     meta_path = base_path + ".sigmf-meta"
@@ -201,16 +211,22 @@ def save_sigmf_pair(
                     "coordinates": [round(lon, 6), round(lat, 6), round(alt, 1)],
                 }
 
+        global_meta: dict[str, Any] = {
+            "core:datatype": "cf32_le",
+            "core:sample_rate": use_sr,
+            "core:hw": hw_model,
+            "core:author": AUTHOR,
+            "core:version": "1.0.0",
+            "core:recorder": f"PlutoSiege v{VERSION}",
+            "core:description": "Host-estimated timestamp. May have USB/IIO latency.",
+        }
+        if use_rx_gain is not None:
+            global_meta["pluto_siege:rx_gain"] = use_rx_gain
+        if use_rf_bw is not None:
+            global_meta["pluto_siege:rf_bandwidth"] = use_rf_bw
+
         meta = {
-            "global": {
-                "core:datatype": "cf32_le",
-                "core:sample_rate": use_sr,
-                "core:hw": hw_model,
-                "core:author": AUTHOR,
-                "core:version": "1.0.0",
-                "core:recorder": f"PlutoSiege v{VERSION}",
-                "core:description": "Host-estimated timestamp. May have USB/IIO latency.",
-            },
+            "global": global_meta,
             "captures": [capture_entry],
             "annotations": [],
         }
@@ -291,22 +307,21 @@ def load_sigmf_meta(
         )
 
     if bounds is None:
-        low, high = FREQ_RANGE_IN_SPEC
+        if freq <= 0:
+            return None, None, f"frequency {brief(freq, 11)} Hz must be > 0"
     else:
         if not isinstance(bounds, tuple) or len(bounds) != 2:
             return None, None, "invalid frequency bounds"
         b_lo, b_hi = _finite_int(bounds[0]), _finite_int(bounds[1])
         if b_lo is None or b_hi is None or b_lo > b_hi:
             return None, None, "invalid frequency bounds"
-        low, high = b_lo, b_hi
-
-    if not low <= freq <= high:
-        freq_str = f"{freq / 1e6:.3f}"
-        return (
-            None,
-            None,
-            f"{brief(freq_str, 11)} MHz outside {low / 1e6:g}-{high / 1e6:g} MHz",
-        )
+        if not b_lo <= freq <= b_hi:
+            freq_str = f"{freq / 1e6:.3f}"
+            return (
+                None,
+                None,
+                f"{brief(freq_str, 11)} MHz outside {b_lo / 1e6:g}-{b_hi / 1e6:g} MHz",
+            )
     return sr, freq, None
 
 

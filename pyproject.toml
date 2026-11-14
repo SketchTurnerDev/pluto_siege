@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pluto_siege"
-version = "2.0.3"
+version = "2.1.0"
 description = "PlutoSDR ISM-band RF capture and replay tool (433 MHz, 868 MHz, etc.)."
 readme = "README.md"
 license = "GPL-3.0-or-later"
@@ -21,6 +21,8 @@ keywords = [
     "433mhz",
     "868mhz",
     "adalm-pluto",
+    "ham-radio",
+    "ism-band",
     "pentesting",
     "pluto-sdr",
     "pluto-siege",
@@ -29,13 +31,11 @@ keywords = [
     "python",
     "radio-frequency",
     "red-team",
-    "rf",
     "rf-hacking",
     "sdr",
     "security-tools",
     "sigmf",
     "subghz",
-    "tui",
     "wireless",
     "wireless-security",
 ]
@@ -52,7 +52,7 @@ Repository = "https://github.com/SketchTurnerDev/pluto_siege.git"
 Issues = "https://github.com/SketchTurnerDev/pluto_siege/issues"
 
 [project.scripts]
-pluto_siege = "pluto_siege.ui.screens.main_menu:main"
+pluto_siege = "pluto_siege.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

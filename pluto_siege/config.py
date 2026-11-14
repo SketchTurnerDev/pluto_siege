@@ -27,25 +27,46 @@ from typing import Any
 
 from pluto_siege.constants import (
     AUTO_MARGIN_RANGE,
+    AUTO_RECAL_RANGE,
     CONFIG_FILE,
-    FREQ_RANGE_EXTENDED,
-    FREQ_RANGE_IN_SPEC,
+    FREQ_RANGE,
+    MIN_BURST_RANGE,
     POST_TRIGGER_RANGE,
     PRE_TRIGGER_RANGE,
+    RECORDS_DIR,
+    RF_BANDWIDTH_RANGE,
     RX_BUFFER_RANGE,
     RX_GAIN_RANGE,
     SAMPLE_RATE_RANGE,
     SILENCE_RANGE,
     THRESHOLD_RANGE,
     TX_GAIN_RANGE,
+    TX_REPEATS_RANGE,
 )
 
 
-def _ip_endpoint(uri: object) -> str | None:
-    """Extract the host/IP part from an 'ip:...' URI, or None if not an IP URI."""
-    if isinstance(uri, str) and uri.startswith("ip:"):
-        return uri[3:].strip()
-    return None
+def normalize_pluto_uri(raw: str) -> str:
+    """Validate and normalize a libiio context URI (e.g. 'usb:', 'ip:192.168.2.1')."""
+    cleaned = raw.strip()
+    if (
+        not cleaned
+        or "\x00" in cleaned
+        or any(ch.isspace() or not ch.isprintable() for ch in cleaned)
+    ):
+        raise ValueError("Invalid Pluto URI.")
+    lower = cleaned.lower()
+    if lower in ("usb", "usb:"):
+        return "usb:"
+    if lower in ("local", "local:"):
+        return "local:"
+    if lower.startswith("ip:"):
+        host = cleaned[3:].strip()
+        if not host:
+            raise ValueError("IP URI requires a host (e.g. ip:192.168.2.1).")
+        return f"ip:{host}"
+    if ":" not in cleaned:
+        return f"ip:{cleaned}"
+    return cleaned
 
 
 @dataclass
@@ -53,30 +74,28 @@ class AppConfig:
     """Application configuration with range validation and atomic persistence."""
 
     pluto_uri: str = "usb:"
-    pluto_ip: str = "192.168.2.1"
     rx_freq: int = 433_920_000
-    tx_freq: int = 433_920_000
     sample_rate: int = 2_100_000
+    rf_bandwidth: int = 0
     rx_gain: float = 15.0
     tx_gain: float = 0.0
+    tx_repeats: int = 1
     rx_buffer_size: int = 32768
+    auto_capture: bool = False
     auto_threshold: bool = True
     auto_trigger_margin: float = 8.0
+    auto_recal_seconds: float = 0.0
     manual_threshold: float = -30.0
     pre_trigger_buffers: int = 2
+    min_burst_seconds: float = 0.0
     silence_seconds: float = 0.8
     max_post_trigger_seconds: float = 4.0
-    permit_out_of_spec_frequency: bool = False
     enable_mouse: bool = True
     enable_sound: bool = True
     enable_gps: bool = False
     gpsd_host: str = "127.0.0.1"
     gpsd_port: int = 2947
-
-    def __post_init__(self) -> None:
-        endpoint = _ip_endpoint(self.pluto_uri)
-        if endpoint:
-            self.pluto_ip = endpoint
+    records_dir: str = RECORDS_DIR
 
     def update(self, new_values: dict[str, Any]) -> None:
         """Validate and apply known configuration keys in place."""
@@ -89,37 +108,12 @@ class AppConfig:
 
         candidate = self.to_dict()
         candidate.update(known)
-        if (
-            "pluto_ip" in known
-            and "pluto_uri" not in known
-            and self.pluto_uri.startswith("ip:")
-            and isinstance(known["pluto_ip"], str)
-            and known["pluto_ip"].strip()
-        ):
-            candidate["pluto_uri"] = f"ip:{known['pluto_ip'].strip()}"
-
         validated = validate_config(candidate)
         for f in fields(self):
             setattr(self, f.name, getattr(validated, f.name))
 
     def to_dict(self) -> dict[str, Any]:
-        values = asdict(self)
-        endpoint = _ip_endpoint(values["pluto_uri"])
-        if endpoint:
-            values["pluto_ip"] = endpoint
-        elif endpoint == "" and isinstance(values["pluto_ip"], str):
-            ip = values["pluto_ip"].strip()
-            if ip:
-                values["pluto_uri"] = f"ip:{ip}"
-        return values
-
-    @property
-    def freq_bounds(self) -> tuple[int, int]:
-        return (
-            FREQ_RANGE_EXTENDED
-            if self.permit_out_of_spec_frequency
-            else FREQ_RANGE_IN_SPEC
-        )
+        return asdict(self)
 
 
 def validate_config(raw: dict[str, Any]) -> AppConfig:
@@ -134,21 +128,13 @@ def validate_config(raw: dict[str, Any]) -> AppConfig:
 
     uri = raw.get("pluto_uri")
     if isinstance(uri, str) and uri.strip():
-        cfg.pluto_uri = uri.strip()
-
-    raw_ip = raw.get("pluto_ip")
-    saved_ip = raw_ip.strip() if isinstance(raw_ip, str) and raw_ip.strip() else None
-    endpoint = _ip_endpoint(cfg.pluto_uri)
-    if endpoint:
-        cfg.pluto_ip = endpoint
-    elif endpoint == "" and saved_ip:
-        cfg.pluto_ip = saved_ip
-        cfg.pluto_uri = f"ip:{saved_ip}"
-    elif saved_ip:
-        cfg.pluto_ip = saved_ip
+        try:
+            cfg.pluto_uri = normalize_pluto_uri(uri)
+        except ValueError:
+            pass
 
     for bool_key in (
-        "permit_out_of_spec_frequency",
+        "auto_capture",
         "auto_threshold",
         "enable_mouse",
         "enable_sound",
@@ -162,7 +148,18 @@ def validate_config(raw: dict[str, Any]) -> AppConfig:
     if isinstance(host, str) and host.strip():
         cfg.gpsd_host = host.strip()
 
-    def check_num(key: str, limits: tuple[float, float], cast_type: type) -> None:
+    rec_dir = raw.get("records_dir")
+    if (
+        isinstance(rec_dir, str)
+        and rec_dir.strip()
+        and "\x00" not in rec_dir
+        and all(ch.isprintable() for ch in rec_dir.strip())
+    ):
+        cfg.records_dir = os.path.expanduser(rec_dir.strip())
+
+    def check_num(
+        key: str, limits: tuple[float, float | None], cast_type: type
+    ) -> None:
         val = raw.get(key)
         if isinstance(val, bool) or not isinstance(val, (int, float)):
             return
@@ -170,7 +167,8 @@ def validate_config(raw: dict[str, Any]) -> AppConfig:
             num = float(val)
         except (OverflowError, ValueError):
             return
-        if not math.isfinite(num) or not (limits[0] <= num <= limits[1]):
+        lo, hi = limits
+        if not math.isfinite(num) or num < lo or (hi is not None and num > hi):
             return
         if cast_type is int:
             if num.is_integer():
@@ -178,18 +176,29 @@ def validate_config(raw: dict[str, Any]) -> AppConfig:
         else:
             setattr(cfg, key, num)
 
-    freq_range = cfg.freq_bounds
-    check_num("rx_freq", freq_range, int)
-    check_num("tx_freq", freq_range, int)
+    check_num("rx_freq", FREQ_RANGE, int)
     check_num("sample_rate", SAMPLE_RATE_RANGE, int)
+    raw_bw = raw.get("rf_bandwidth")
+    if not isinstance(raw_bw, bool) and isinstance(raw_bw, (int, float)):
+        try:
+            bw_num = float(raw_bw)
+        except (OverflowError, ValueError):
+            bw_num = -1.0
+        if math.isfinite(bw_num) and bw_num.is_integer():
+            bw_int = int(bw_num)
+            if bw_int == 0 or RF_BANDWIDTH_RANGE[0] <= bw_int <= RF_BANDWIDTH_RANGE[1]:
+                cfg.rf_bandwidth = bw_int
     check_num("rx_gain", RX_GAIN_RANGE, float)
     check_num("tx_gain", TX_GAIN_RANGE, float)
+    check_num("tx_repeats", TX_REPEATS_RANGE, int)
     check_num("rx_buffer_size", RX_BUFFER_RANGE, int)
     check_num("pre_trigger_buffers", PRE_TRIGGER_RANGE, int)
+    check_num("min_burst_seconds", MIN_BURST_RANGE, float)
     check_num("silence_seconds", SILENCE_RANGE, float)
     check_num("max_post_trigger_seconds", POST_TRIGGER_RANGE, float)
     check_num("manual_threshold", THRESHOLD_RANGE, float)
     check_num("auto_trigger_margin", AUTO_MARGIN_RANGE, float)
+    check_num("auto_recal_seconds", AUTO_RECAL_RANGE, float)
     check_num("gpsd_port", (1, 65535), int)
 
     return cfg
@@ -240,9 +249,77 @@ def save_settings(config: AppConfig | None = None) -> bool:
                 pass
 
 
-def freq_bounds(cfg: AppConfig | None = None) -> tuple[int, int]:
-    """Return active frequency limits for the given or global configuration."""
-    return (CONFIG if cfg is None else cfg).freq_bounds
+def parse_number(
+    raw: str,
+    cast_type: type,
+    min_val: float | None = None,
+    max_val: float | None = None,
+) -> int | float:
+    """Parse numeric input string with unit multipliers (k, M, G, Hz, SPS, ms, s).
+
+    Auto-converts bare MHz shorthand (< 10_000, e.g. 433 or 433.92) to Hz/SPS
+    for frequency and sample-rate fields.
+    """
+    cleaned = raw.strip().lower()
+    mult = 1.0
+    explicit_unit = False
+    for suffix, factor in (
+        ("ghz", 1e9),
+        ("g", 1e9),
+        ("msps", 1e6),
+        ("mhz", 1e6),
+        ("ms", 1e-3),
+        ("m", 1e6),
+        ("ksps", 1e3),
+        ("khz", 1e3),
+        ("k", 1e3),
+        ("sps", 1.0),
+        ("hz", 1.0),
+        ("sec", 1.0),
+        ("s", 1.0),
+    ):
+        if cleaned.endswith(suffix):
+            cleaned = cleaned[: -len(suffix)].strip()
+            mult = factor
+            explicit_unit = True
+            break
+
+    try:
+        num = float(cleaned)
+    except (ValueError, OverflowError):
+        raise ValueError("Invalid number.") from None
+
+    if not math.isfinite(num):
+        raise ValueError("Value must be finite.")
+
+    num *= mult
+    if not math.isfinite(num):
+        raise ValueError("Value must be finite.")
+
+    is_freq_or_rate = min_val is not None and (min_val >= 100_000 or max_val is None)
+    if cast_type is int and not explicit_unit and is_freq_or_rate and 0 < num < 10_000:
+        num *= 1e6
+        if not math.isfinite(num):
+            raise ValueError("Value must be finite.")
+
+    if cast_type is int:
+        rounded = round(num)
+        if abs(num - rounded) > 1e-6:
+            raise ValueError("Value must be an integer.")
+        return int(rounded)
+    return num
+
+
+def parse_rf_bandwidth(raw: str) -> int:
+    """Parse RF filter bandwidth string ('0', 'auto', or Hz with k/M suffixes)."""
+    cleaned = raw.strip().lower()
+    if cleaned in ("0", "auto"):
+        return 0
+    lo, hi = RF_BANDWIDTH_RANGE
+    val = int(parse_number(raw, int, lo, hi))
+    if val < lo or val > hi:
+        raise ValueError(f"Must be 0 (auto) or within {lo} .. {hi}")
+    return val
 
 
 DEFAULT_SETTINGS = AppConfig().to_dict()

@@ -17,7 +17,7 @@
 
 """Entry point for ``python3 -m pluto_siege``."""
 
-from pluto_siege.ui.screens.main_menu import main
+from pluto_siege.cli import main
 
 if __name__ == "__main__":
     main()

@@ -21,6 +21,7 @@ dist/
 settings.json
 settings.json.tmp
 recordings/
+records/
 *.sigmf-data
 *.sigmf-meta
 *.tmp

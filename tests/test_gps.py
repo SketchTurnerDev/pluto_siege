@@ -14,6 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import socket
+import threading
+import time
+
 from pluto_siege.config import AppConfig
 from pluto_siege.gps import GPSFix, GPSManager, parse_gpsd_message
 
@@ -100,3 +104,111 @@ def test_gps_manager_status_for_fix() -> None:
         GPSFix(latitude=-55.75, longitude=37.61, has_fix=True, satellites=8)
     )
     assert "55.750°S, 37.610°E" in manager.get_status_text()
+
+
+class FakeGpsdSocket:
+    """Deterministic socket stub for testing GPSManager._read_socket and _run."""
+
+    def __init__(
+        self,
+        chunks: list[bytes | BaseException],
+        hold_open: threading.Event | None = None,
+    ) -> None:
+        self._chunks = list(chunks)
+        self._hold_open = hold_open
+        self.sent: list[bytes] = []
+        self.timeout: float | None = None
+        self.closed = False
+
+    def settimeout(self, value: float | None) -> None:
+        self.timeout = value
+
+    def sendall(self, data: bytes) -> None:
+        self.sent.append(data)
+
+    def recv(self, _bufsize: int) -> bytes:
+        if self.closed:
+            raise OSError("Socket closed")
+        if self._chunks:
+            item = self._chunks.pop(0)
+            if isinstance(item, BaseException):
+                raise item
+            return item
+        if self._hold_open is not None:
+            self._hold_open.wait(timeout=2.0)
+        return b""
+
+    def close(self) -> None:
+        self.closed = True
+        if self._hold_open is not None:
+            self._hold_open.set()
+
+
+def test_gps_manager_read_socket_handles_fragmentation_timeouts_and_oversized_lines() -> (
+    None
+):
+    manager = GPSManager(AppConfig(gpsd_host="127.0.0.1", gpsd_port=2947))
+    endpoint = ("127.0.0.1", 2947)
+
+    oversized_no_newline = b"x" * (GPSManager._MAX_LINE_BYTES + 100)
+    chunks: list[bytes | BaseException] = [
+        socket.timeout("read timed out"),
+        b'{"class":"SKY","uS',
+        b'at":6}\n{"class":"TPV",',
+        b'"mode":3,"lat":12.345,"lon":67.89,"alt":42.0}\n',
+        b"\n   \n{bad json}\n[1, 2, 3]\n",
+        oversized_no_newline,
+        b'remainder_to_discard\n{"class":"SKY","uSat":9}\n',
+        b"",
+    ]
+    fake_sock = FakeGpsdSocket(chunks)
+    manager._read_socket(fake_sock, endpoint)  # type: ignore[arg-type]
+
+    fix = manager.get_latest_fix()
+    assert fix.has_fix is True
+    assert fix.latitude == 12.345
+    assert fix.longitude == 67.89
+    assert fix.altitude == 42.0
+    assert fix.satellites == 9
+    assert manager.get_status_text() == "12.345°N, 67.890°E (9 sats)"
+
+
+def test_gps_manager_start_and_stop_lifecycle(monkeypatch) -> None:
+    hold = threading.Event()
+    fake_sock = FakeGpsdSocket(
+        chunks=[
+            b'{"class":"SKY","uSat":5}\n',
+            b'{"class":"TPV","mode":3,"lat":10.0,"lon":20.0,"alt":150.0}\n',
+        ],
+        hold_open=hold,
+    )
+
+    def fake_create_connection(
+        address: tuple[str, int], timeout: float = 3.0
+    ) -> FakeGpsdSocket:
+        assert address == ("127.0.0.1", 2947)
+        return fake_sock
+
+    monkeypatch.setattr(socket, "create_connection", fake_create_connection)
+
+    manager = GPSManager(
+        AppConfig(enable_gps=True, gpsd_host="127.0.0.1", gpsd_port=2947)
+    )
+    manager.start()
+    try:
+        deadline = time.monotonic() + 2.0
+        while not manager.get_latest_fix().has_fix and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        assert fake_sock.sent == [b'?WATCH={"enable":true,"json":true};\r\n']
+        fix = manager.get_latest_fix()
+        assert fix.has_fix is True
+        assert fix.satellites == 5
+        assert fix.latitude == 10.0
+        assert fix.longitude == 20.0
+    finally:
+        manager.stop()
+
+    assert fake_sock.closed is True
+    assert manager.get_latest_fix() == GPSFix()
+    assert manager.get_status_text() == "OFF"

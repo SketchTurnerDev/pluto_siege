@@ -17,6 +17,7 @@
 import json
 
 import numpy as np
+import pytest
 
 from pluto_siege.gps import GPSFix
 from pluto_siege.sigmf import (
@@ -76,7 +77,7 @@ def test_sigmf_rejects_frequency_outside_bounds(tmp_path) -> None:
 
 
 def test_sigmf_rejects_non_finite_samples(tmp_path) -> None:
-    try:
+    with pytest.raises(ValueError):
         save_sigmf_pair(
             str(tmp_path / "capture"),
             np.array([np.nan + 0j], dtype=np.complex64),
@@ -85,10 +86,6 @@ def test_sigmf_rejects_non_finite_samples(tmp_path) -> None:
             timestamp_iso="2026-01-01T12:00:00Z",
             hw_model="ADALM-Pluto",
         )
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("non-finite samples must be rejected")
 
 
 def test_sigmf_omits_invalid_geolocation(tmp_path) -> None:
@@ -104,3 +101,42 @@ def test_sigmf_omits_invalid_geolocation(tmp_path) -> None:
     )
 
     assert load_sigmf_geolocation(base) is None
+
+
+def test_sigmf_records_optional_rx_gain_and_rf_bandwidth(tmp_path) -> None:
+    base = str(tmp_path / "capture_rf")
+    save_sigmf_pair(
+        base,
+        np.ones(4, dtype=np.complex64),
+        freq=433_920_000,
+        sr=2_100_000,
+        timestamp_iso="2026-01-01T12:00:00Z",
+        hw_model="PlutoSDR",
+        rx_gain=22.5,
+        rf_bandwidth=500_000,
+    )
+    meta = json.loads((tmp_path / "capture_rf.sigmf-meta").read_text(encoding="utf-8"))
+    assert meta["global"]["pluto_siege:rx_gain"] == 22.5
+    assert meta["global"]["pluto_siege:rf_bandwidth"] == 500_000
+
+    with pytest.raises(ValueError, match="rx_gain"):
+        save_sigmf_pair(
+            base,
+            np.ones(2, dtype=np.complex64),
+            freq=433_920_000,
+            sr=2_100_000,
+            timestamp_iso="2026-01-01T12:00:00Z",
+            hw_model="PlutoSDR",
+            rx_gain=float("nan"),
+        )
+
+    with pytest.raises(ValueError, match="rf_bandwidth"):
+        save_sigmf_pair(
+            base,
+            np.ones(2, dtype=np.complex64),
+            freq=433_920_000,
+            sr=2_100_000,
+            timestamp_iso="2026-01-01T12:00:00Z",
+            hw_model="PlutoSDR",
+            rf_bandwidth=0,
+        )

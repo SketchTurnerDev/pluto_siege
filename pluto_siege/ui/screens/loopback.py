@@ -25,7 +25,7 @@ from pluto_siege.constants import (
     IO_TIMEOUT_UNAVAILABLE,
     LOOPBACK_MIN_SNR_DB,
 )
-from pluto_siege.device import SDRDevice
+from pluto_siege.device import SDRDevice, format_loopback_summary
 from pluto_siege.engine import LoopbackTester
 from pluto_siege.sound import SoundCue, play_cue
 from pluto_siege.ui.widgets.framework import (
@@ -52,7 +52,10 @@ def screen_loopback(
     while True:
         if not screen_is_usable(win) and not wait_for_usable_screen(win):
             return
-        log: list[tuple[str, int]] = [("Running digital loopback test...", C_DIM)]
+        log: list[tuple[str, int]] = [
+            ("Running digital loopback test...", C_DIM),
+            (format_loopback_summary(cfg), C_DIM),
+        ]
 
         try:
             play_cue(SoundCue.START, enabled=cfg.enable_sound)
